@@ -1,0 +1,16 @@
+# Environment and secrets
+.env
+
+# Bot state files
+portfolio.json
+trades.json
+bot.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/

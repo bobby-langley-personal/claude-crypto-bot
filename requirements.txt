@@ -1,0 +1,15 @@
+# Core bot dependencies
+anthropic>=0.40.0
+requests>=2.31.0
+python-dotenv>=1.0.0
+rich>=13.7.0
+schedule>=1.2.0
+
+# Web dashboard (FastAPI + WebSockets)
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0   # includes websockets + httptools
+jinja2>=3.1.0
+
+# AWS deployment (used by deploy/deploy_aws.py only)
+boto3>=1.28.0
+paramiko>=3.0.0

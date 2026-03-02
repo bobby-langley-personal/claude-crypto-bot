@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Crypto Sentiment Bot</title>
+
+  <!-- Tailwind CSS (CDN – no build step required) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Alpine.js (reactive bindings) -->
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+
+  <script>
+    /* Tell Tailwind to use class-based dark mode and register custom colours */
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            navy:  { 950: '#070d1a', 900: '#0d1525', 800: '#111c30' },
+          },
+          fontFamily: { mono: ['"JetBrains Mono"', '"Fira Code"', 'ui-monospace', 'monospace'] },
+        }
+      }
+    }
+  </script>
+
+  <style>
+    /* Hide Alpine templates before JS loads */
+    [x-cloak] { display: none !important; }
+
+    /* Dark scrollbars */
+    ::-webkit-scrollbar       { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: #0d1525; }
+    ::-webkit-scrollbar-thumb { background: #1e3a5f; border-radius: 2px; }
+
+    /* Pulsing status dot */
+    @keyframes status-pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.3; }
+    }
+    .status-pulse { animation: status-pulse 2s ease-in-out infinite; }
+
+    /* Table row hover */
+    .trow:hover { background: rgba(255,255,255,0.025); }
+
+    /* Score bar */
+    .score-bar { transition: width 0.6s ease; }
+
+    /* Log entry */
+    .log-entry { font-size: 0.7rem; line-height: 1.4; }
+  </style>
+</head>
+
+<body class="dark bg-navy-950 text-slate-100 font-mono min-h-screen">
+
+<div x-data="app()" x-init="init()" x-cloak class="flex flex-col min-h-screen">
+
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <!--  HEADER                                                               -->
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <header class="sticky top-0 z-20 border-b border-slate-800/60 bg-navy-950/95 backdrop-blur px-5 py-3
+                 flex items-center justify-between gap-4">
+
+    <!-- Left: logo + badges -->
+    <div class="flex items-center gap-3">
+      <div class="flex items-center gap-2">
+        <div class="w-2 h-2 rounded-full status-pulse"
+             :class="isRunning() ? 'bg-emerald-400' : 'bg-slate-600'"></div>
+        <span class="text-cyan-400 font-bold text-base tracking-widest">CRYPTO BOT</span>
+      </div>
+
+      <span class="px-2 py-0.5 bg-amber-900/40 text-amber-400 border border-amber-700/60 rounded text-xs">
+        PAPER
+      </span>
+
+      <span class="px-2 py-0.5 border rounded text-xs"
+            :class="{
+              'bg-emerald-900/30 text-emerald-400 border-emerald-700/50': s.config?.risk_level === 'conservative',
+              'bg-amber-900/30  text-amber-400  border-amber-700/50':    s.config?.risk_level === 'moderate',
+              'bg-red-900/30    text-red-400    border-red-700/50':      s.config?.risk_level === 'aggressive',
+            }"
+            x-text="'RISK · ' + (s.config?.risk_level || '—').toUpperCase()">
+      </span>
+    </div>
+
+    <!-- Centre: status string + next check -->
+    <div class="hidden md:flex items-center gap-5 text-xs text-slate-500">
+      <span :class="statusClass()" x-text="(s.status || 'connecting').toUpperCase()"></span>
+      <span x-show="s.next_check !== '—'" x-text="'Next analysis: ' + s.next_check"></span>
+    </div>
+
+    <!-- Right: WS indicator + start/stop -->
+    <div class="flex items-center gap-3">
+      <div class="flex items-center gap-1.5 text-xs"
+           :class="connected ? 'text-emerald-500' : 'text-red-500'">
+        <div class="w-1.5 h-1.5 rounded-full"
+             :class="connected ? 'bg-emerald-400 status-pulse' : 'bg-red-500'"></div>
+        <span x-text="connected ? 'LIVE' : 'RECONNECTING'"></span>
+      </div>
+
+      <button x-show="!isRunning()" @click="startBot()"
+              class="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95
+                     text-white rounded text-xs font-bold tracking-wide transition-all">
+        ▶ START BOT
+      </button>
+      <button x-show="isRunning()" @click="stopBot()"
+              class="px-4 py-1.5 bg-red-700 hover:bg-red-600 active:scale-95
+                     text-white rounded text-xs font-bold tracking-wide transition-all">
+        ■ STOP BOT
+      </button>
+    </div>
+  </header>
+
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <!--  MAIN CONTENT                                                         -->
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <main class="flex-1 p-4 space-y-3">
+
+    <!-- ── Row 1: Portfolio KPI cards ────────────────────────────────────── -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+
+      <!-- Portfolio Value -->
+      <div class="bg-navy-900 border border-slate-800/60 rounded-xl p-4">
+        <div class="text-slate-500 text-xs uppercase tracking-widest mb-2">Portfolio</div>
+        <div class="text-2xl font-bold text-white" x-text="fmtUSD(s.portfolio?.total)"></div>
+        <div class="text-xs mt-1" :class="pnlCls(s.portfolio?.pnl_usd)"
+             x-text="(s.portfolio?.pnl_usd >= 0 ? '+' : '') + fmtUSD(s.portfolio?.pnl_usd)
+                     + '  (' + fmtPct(s.portfolio?.pnl_pct) + ')'">
+        </div>
+      </div>
+
+      <!-- Cash -->
+      <div class="bg-navy-900 border border-slate-800/60 rounded-xl p-4">
+        <div class="text-slate-500 text-xs uppercase tracking-widest mb-2">Cash Available</div>
+        <div class="text-2xl font-bold text-white" x-text="fmtUSD(s.portfolio?.cash)"></div>
+        <div class="text-xs mt-1 text-slate-600">Virtual USD balance</div>
+      </div>
+
+      <!-- P&L -->
+      <div class="bg-navy-900 border border-slate-800/60 rounded-xl p-4">
+        <div class="text-slate-500 text-xs uppercase tracking-widest mb-2">Total P&L</div>
+        <div class="text-2xl font-bold" :class="pnlCls(s.portfolio?.pnl_usd)"
+             x-text="(s.portfolio?.pnl_usd >= 0 ? '+' : '') + fmtUSD(s.portfolio?.pnl_usd)">
+        </div>
+        <div class="text-xs mt-1" :class="pnlCls(s.portfolio?.pnl_pct)"
+             x-text="fmtPct(s.portfolio?.pnl_pct) + ' return on $'
+                     + fmtNum(s.portfolio?.starting_cash)">
+        </div>
+      </div>
+
+      <!-- Positions / Risk config -->
+      <div class="bg-navy-900 border border-slate-800/60 rounded-xl p-4">
+        <div class="text-slate-500 text-xs uppercase tracking-widest mb-2">Positions</div>
+        <div class="text-2xl font-bold text-white"
+             x-text="(s.portfolio?.positions_count || 0) + ' / ' + (s.config?.max_positions || 4)">
+        </div>
+        <div class="text-xs mt-1 text-slate-600"
+             x-text="'Buy ≥ ' + (s.config?.threshold || '—') + '/10  ·  TP +'
+                     + (s.config?.take_profit || '—') + '%  ·  SL '
+                     + (s.config?.stop_loss || '—') + '%'">
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Row 2: Live prices ─────────────────────────────────────────────── -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <template x-for="coin in priceList()" :key="coin.symbol">
+        <div class="bg-navy-900 border border-slate-800/60 rounded-xl p-4">
+          <div class="flex items-center justify-between mb-2">
+            <span class="font-bold text-cyan-400 text-base" x-text="coin.symbol"></span>
+            <span class="text-xs px-1.5 py-0.5 rounded"
+                  :class="badgeCls(coin.val.badge)"
+                  x-text="coin.val.badge || '?'"></span>
+          </div>
+          <div class="text-xl font-bold text-white" x-text="fmtPrice(coin.symbol, coin.price)"></div>
+          <div class="text-xs mt-1 text-slate-600"
+               x-text="coin.val.divergence_pct != null
+                        ? 'CG divergence: ' + coin.val.divergence_pct.toFixed(2) + '%'
+                        : 'CoinGecko unavailable'">
+          </div>
+        </div>
+      </template>
+      <!-- Placeholder while prices load -->
+      <template x-if="priceList().length === 0">
+        <div class="col-span-4 bg-navy-900 border border-slate-800/60 rounded-xl p-4
+                    text-slate-600 text-center text-xs">
+          Fetching live prices…
+        </div>
+      </template>
+    </div>
+
+    <!-- ── Row 3: Positions | Sentiment ──────────────────────────────────── -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+
+      <!-- Open positions -->
+      <div class="bg-navy-900 border border-slate-800/60 rounded-xl p-4">
+        <h2 class="text-xs text-slate-500 uppercase tracking-widest font-bold mb-3">
+          Open Positions
+        </h2>
+        <table class="w-full text-xs">
+          <thead>
+            <tr class="text-slate-600 border-b border-slate-800">
+              <th class="text-left pb-2 pr-2">Coin</th>
+              <th class="text-right pb-2 pr-2">Entry</th>
+              <th class="text-right pb-2 pr-2">Now</th>
+              <th class="text-right pb-2 pr-2">P&amp;L</th>
+              <th class="text-right pb-2">Target / Stop</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="p in (s.positions || [])" :key="p.symbol">
+              <tr class="trow border-b border-slate-800/40">
+                <td class="py-2 pr-2 font-bold text-cyan-400" x-text="p.symbol"></td>
+                <td class="py-2 pr-2 text-right text-slate-400" x-text="fmtUSD(p.entry_price, 4)"></td>
+                <td class="py-2 pr-2 text-right text-slate-300" x-text="fmtUSD(p.current_price, 4)"></td>
+                <td class="py-2 pr-2 text-right font-bold" :class="pnlCls(p.pnl_usd)">
+                  <div x-text="(p.pnl_usd >= 0 ? '+' : '') + fmtUSD(p.pnl_usd)"></div>
+                  <div class="text-xs opacity-70" x-text="fmtPct(p.pnl_pct)"></div>
+                </td>
+                <td class="py-2 text-right text-xs">
+                  <span class="text-emerald-600/80" x-text="fmtUSD(p.target_price, 2)"></span>
+                  <span class="text-slate-700"> / </span>
+                  <span class="text-red-600/80"     x-text="fmtUSD(p.stop_price, 2)"></span>
+                </td>
+              </tr>
+            </template>
+            <tr x-show="!(s.positions || []).length">
+              <td colspan="5" class="py-4 text-center text-slate-700">No open positions</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Sentiment analysis -->
+      <div class="bg-navy-900 border border-slate-800/60 rounded-xl p-4">
+        <h2 class="text-xs text-slate-500 uppercase tracking-widest font-bold mb-3">
+          Sentiment Analysis
+          <span class="normal-case font-normal text-slate-700 ml-1">(Claude AI · 1–10)</span>
+        </h2>
+        <div class="space-y-3">
+          <template x-for="a in analysisList()" :key="a.symbol">
+            <div class="border border-slate-800/40 rounded-lg p-3">
+              <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center gap-3">
+                  <span class="font-bold text-cyan-400" x-text="a.symbol"></span>
+                  <!-- Score badge -->
+                  <span class="text-xl font-bold" :class="scoreCls(a.score)"
+                        x-text="(a.score || 0).toFixed(1)"></span>
+                  <span class="text-xs font-bold px-2 py-0.5 rounded"
+                        :class="signalBadgeCls(a.score)"
+                        x-text="signalTxt(a.score)"></span>
+                </div>
+                <div class="flex items-center gap-2 text-xs">
+                  <span :class="confCls(a.validation?.confidence)"
+                        x-text="(a.validation?.badge || '') + ' ' + (a.validation?.confidence || '—').toUpperCase()">
+                  </span>
+                  <span class="text-slate-700" x-text="a.source || '—'"></span>
+                </div>
+              </div>
+              <!-- Score bar -->
+              <div class="bg-slate-800 rounded-full h-1 mb-2">
+                <div class="score-bar h-1 rounded-full"
+                     :class="scoreCls(a.score).replace('text-', 'bg-')"
+                     :style="'width: ' + ((a.score || 0) / 10 * 100) + '%'"></div>
+              </div>
+              <!-- Reasoning snippet -->
+              <p class="text-xs text-slate-600 truncate" x-text="a.reasoning || '—'"></p>
+              <!-- Validation warnings -->
+              <template x-if="(a.validation?.warnings || []).length">
+                <p class="text-xs text-yellow-600 mt-1"
+                   x-text="'⚠ ' + a.validation.warnings[0]"></p>
+              </template>
+            </div>
+          </template>
+          <div x-show="!analysisList().length"
+               class="py-4 text-center text-slate-700 text-xs">
+            Waiting for first analysis cycle…
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Row 4: Recent trades | Activity log ────────────────────────────── -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+
+      <!-- Recent trades -->
+      <div class="bg-navy-900 border border-slate-800/60 rounded-xl p-4">
+        <h2 class="text-xs text-slate-500 uppercase tracking-widest font-bold mb-3">
+          Recent Trades
+        </h2>
+        <table class="w-full text-xs">
+          <thead>
+            <tr class="text-slate-600 border-b border-slate-800">
+              <th class="text-left pb-2 pr-2">Time (UTC)</th>
+              <th class="text-center pb-2 pr-2">Action</th>
+              <th class="text-left pb-2 pr-2">Coin</th>
+              <th class="text-right pb-2 pr-2">Price</th>
+              <th class="text-right pb-2 pr-2">Amount</th>
+              <th class="text-right pb-2">P&amp;L</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="(t, i) in (s.trades || [])" :key="i">
+              <tr class="trow border-b border-slate-800/40">
+                <td class="py-2 pr-2 text-slate-600"
+                    x-text="fmtTs(t.timestamp)"></td>
+                <td class="py-2 pr-2 text-center font-bold"
+                    :class="t.action === 'BUY' ? 'text-emerald-400' : 'text-amber-400'"
+                    x-text="t.action"></td>
+                <td class="py-2 pr-2 font-bold text-cyan-400" x-text="t.symbol"></td>
+                <td class="py-2 pr-2 text-right text-slate-300"
+                    x-text="fmtUSD(t.price, 4)"></td>
+                <td class="py-2 pr-2 text-right text-slate-300"
+                    x-text="fmtUSD(t.total_usd)"></td>
+                <td class="py-2 text-right">
+                  <template x-if="t.pnl_usd !== undefined && t.pnl_usd !== null">
+                    <span :class="pnlCls(t.pnl_usd)"
+                          x-text="(t.pnl_usd >= 0 ? '+' : '') + fmtUSD(t.pnl_usd)"></span>
+                  </template>
+                  <template x-if="t.pnl_usd === undefined || t.pnl_usd === null">
+                    <span class="text-slate-700">—</span>
+                  </template>
+                </td>
+              </tr>
+            </template>
+            <tr x-show="!(s.trades || []).length">
+              <td colspan="6" class="py-4 text-center text-slate-700">No trades yet</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Activity log -->
+      <div class="bg-navy-900 border border-slate-800/60 rounded-xl p-4 flex flex-col">
+        <div class="flex items-center justify-between mb-3 flex-shrink-0">
+          <h2 class="text-xs text-slate-500 uppercase tracking-widest font-bold">
+            Activity Log
+          </h2>
+          <span class="text-xs text-slate-700">API calls · decisions · errors</span>
+        </div>
+
+        <!-- Log entries (auto-scrolls to bottom) -->
+        <div class="overflow-y-auto flex-1 space-y-px"
+             style="max-height: 260px"
+             id="log-panel">
+          <template x-for="(e, i) in (s.logs || [])" :key="i">
+            <div class="log-entry flex gap-2 px-1 py-0.5 rounded" :class="logCls(e.level)">
+              <span class="text-slate-700 flex-shrink-0 w-16" x-text="e.ts"></span>
+              <span class="flex-shrink-0 w-8 text-right opacity-60"
+                    x-text="e.level.slice(0,4)"></span>
+              <span class="flex-shrink-0 w-24 truncate opacity-50" x-text="e.name"></span>
+              <span class="flex-1 break-all" x-text="e.message"></span>
+            </div>
+          </template>
+          <div x-show="!(s.logs || []).length"
+               class="text-slate-700 text-xs text-center py-6">
+            Waiting for log entries…
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Config footer ─────────────────────────────────────────────────── -->
+    <div class="bg-navy-900/60 border border-slate-800/40 rounded-xl px-5 py-2.5
+                flex flex-wrap items-center gap-x-6 gap-y-1 text-xs text-slate-600">
+      <span x-text="'Buy threshold: score ≥ ' + (s.config?.threshold || '—') + '/10'"></span>
+      <span x-text="'Take profit: +' + (s.config?.take_profit || '—') + '%'"></span>
+      <span x-text="'Stop loss: ' + (s.config?.stop_loss || '—') + '%'"></span>
+      <span x-text="'Trade size: $' + (s.config?.trade_size || '—')"></span>
+      <span class="ml-auto text-slate-700" x-text="s.config?.description || ''"></span>
+    </div>
+
+  </main><!-- /main -->
+</div><!-- /app -->
+
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<!--  Alpine.js application logic                                             -->
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<script>
+function app() {
+  return {
+    /* ── State ──────────────────────────────────────────────────────────── */
+    s: {
+      status: 'connecting',
+      next_check: '—',
+      prices: {}, validation: {},
+      portfolio: { cash: 0, total: 0, pnl_usd: 0, pnl_pct: 0,
+                   positions_count: 0, starting_cash: 10000 },
+      positions: [],
+      analysis: {},
+      trades: [],
+      logs: [],
+      config: { risk_level: 'moderate', description: '',
+                threshold: 7, take_profit: 12, stop_loss: -5,
+                trade_size: 500, max_positions: 4 },
+    },
+    ws:        null,
+    connected: false,
+    _pingInterval: null,
+
+    /* ── Init ───────────────────────────────────────────────────────────── */
+    init() {
+      this.connect();
+      // Auto-scroll log panel when new logs arrive
+      this.$watch('s.logs', () => {
+        this.$nextTick(() => {
+          const el = document.getElementById('log-panel');
+          if (el) el.scrollTop = el.scrollHeight;
+        });
+      });
+    },
+
+    /* ── WebSocket ──────────────────────────────────────────────────────── */
+    connect() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      this.ws = new WebSocket(`${proto}//${location.host}/ws`);
+
+      this.ws.onopen = () => {
+        this.connected = true;
+        // Send a ping every 30 s to keep the connection alive
+        this._pingInterval = setInterval(() => {
+          if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            this.ws.send('ping');
+          }
+        }, 30000);
+      };
+
+      this.ws.onmessage = (e) => {
+        try { this.s = JSON.parse(e.data); this.connected = true; }
+        catch (_) {}
+      };
+
+      this.ws.onclose = () => {
+        this.connected = false;
+        clearInterval(this._pingInterval);
+        setTimeout(() => this.connect(), 3000);  // reconnect
+      };
+
+      this.ws.onerror = () => { this.connected = false; };
+    },
+
+    /* ── Bot controls ───────────────────────────────────────────────────── */
+    startBot() { fetch('/bot/start', { method: 'POST' }); },
+    stopBot()  { fetch('/bot/stop',  { method: 'POST' }); },
+
+    /* ── Computed helpers ───────────────────────────────────────────────── */
+    isRunning() {
+      const st = this.s.status || '';
+      return st !== 'stopped' && st !== 'connecting' && st !== '';
+    },
+
+    priceList() {
+      return Object.entries(this.s.prices || {}).map(([sym, price]) => ({
+        symbol: sym,
+        price,
+        val: (this.s.validation || {})[sym] || {},
+      }));
+    },
+
+    analysisList() {
+      return Object.entries(this.s.analysis || {})
+        .map(([sym, a]) => ({ symbol: sym, ...a }));
+    },
+
+    /* ── Formatters ─────────────────────────────────────────────────────── */
+    fmtUSD(v, d = 2) {
+      if (v == null) return '$0.00';
+      return '$' + Number(v).toLocaleString('en-US',
+        { minimumFractionDigits: d, maximumFractionDigits: d });
+    },
+
+    fmtPct(v) {
+      if (v == null) return '0.00%';
+      return (v >= 0 ? '+' : '') + Number(v).toFixed(2) + '%';
+    },
+
+    fmtNum(v) {
+      return v ? Number(v).toLocaleString('en-US') : '0';
+    },
+
+    fmtTs(ts) {
+      return (ts || '').slice(0, 16).replace('T', ' ');
+    },
+
+    fmtPrice(sym, price) {
+      if (!price) return '—';
+      if (price >= 1000) return '$' + price.toLocaleString('en-US',
+        { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      if (price >= 1)    return '$' + price.toFixed(4);
+      return '$' + price.toFixed(6);
+    },
+
+    /* ── CSS class helpers ──────────────────────────────────────────────── */
+    pnlCls(v)   { return (v ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'; },
+
+    scoreCls(s) {
+      if (!s) return 'text-slate-500';
+      return s >= 7 ? 'text-emerald-400' : s >= 4 ? 'text-yellow-400' : 'text-red-400';
+    },
+
+    signalTxt(s) {
+      if (!s) return '—';
+      return s >= 7 ? 'BULLISH' : s >= 4 ? 'NEUTRAL' : 'BEARISH';
+    },
+
+    signalBadgeCls(s) {
+      if (!s) return 'bg-slate-800 text-slate-500';
+      return s >= 7
+        ? 'bg-emerald-900/50 text-emerald-400 border border-emerald-700/40'
+        : s >= 4
+        ? 'bg-yellow-900/50 text-yellow-400 border border-yellow-700/40'
+        : 'bg-red-900/50 text-red-400 border border-red-700/40';
+    },
+
+    confCls(c) {
+      return { high: 'text-emerald-500', medium: 'text-yellow-500', low: 'text-red-500' }[c]
+             || 'text-slate-500';
+    },
+
+    badgeCls(b) {
+      if (b === '✓') return 'bg-emerald-900/30 text-emerald-400 border border-emerald-700/40';
+      if (b === '⚠') return 'bg-yellow-900/30  text-yellow-400  border border-yellow-700/40';
+      return 'bg-slate-800 text-slate-600 border border-slate-700';
+    },
+
+    statusClass() {
+      const st = this.s.status || '';
+      if (st.startsWith('idle'))    return 'text-emerald-500';
+      if (st === 'running')         return 'text-emerald-500';
+      if (st === 'analysing')       return 'text-cyan-400';
+      if (st === 'stopped')         return 'text-slate-600';
+      if (st.startsWith('error'))   return 'text-red-400';
+      return 'text-slate-500';
+    },
+
+    logCls(level) {
+      const m = {
+        WARNING:  'text-yellow-400',
+        ERROR:    'text-red-400',
+        CRITICAL: 'text-red-300 font-bold',
+        DEBUG:    'text-slate-700',
+      };
+      return m[level] || 'text-slate-400';
+    },
+  };
+}
+</script>
+
+</body>
+</html>
