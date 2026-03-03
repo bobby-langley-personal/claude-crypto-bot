@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Data validation module – guards against inaccurate data before trades.
 
@@ -35,12 +36,33 @@ log = logging.getLogger(__name__)
 # Flag price divergence above this threshold (2 % by default)
 PRICE_DIVERGENCE_PCT = 2.0
 
-# Map coin tickers to CoinGecko IDs
+# Map coin tickers to CoinGecko IDs.
+# Extended at runtime when new coins are added via add_coin().
 _CG_IDS: dict[str, str] = {
-    "BTC":  "bitcoin",
-    "ETH":  "ethereum",
-    "SOL":  "solana",
-    "DOGE": "dogecoin",
+    "BTC":   "bitcoin",
+    "ETH":   "ethereum",
+    "SOL":   "solana",
+    "DOGE":  "dogecoin",
+    "SHIB":  "shiba-inu",
+    "PEPE":  "pepe",
+    "BONK":  "bonk",
+    "WIF":   "dogwifcoin",
+    "FLOKI": "floki",
+    "ADA":   "cardano",
+    "AVAX":  "avalanche-2",
+    "LINK":  "chainlink",
+    "DOT":   "polkadot",
+    "MATIC": "matic-network",
+    "UNI":   "uniswap",
+    "XRP":   "ripple",
+    "LTC":   "litecoin",
+    "BCH":   "bitcoin-cash",
+    "ATOM":  "cosmos",
+    "APT":   "aptos",
+    "ARB":   "arbitrum",
+    "OP":    "optimism",
+    "INJ":   "injective-protocol",
+    "SUI":   "sui",
 }
 
 # Rolling score history – last 10 scores per coin
@@ -195,6 +217,35 @@ def validate_sentiment(
         "badge":      badge,
         "warnings":   warnings,
     }
+
+
+def register_coin(symbol: str, coingecko_id: str) -> None:
+    """Register a new coin's CoinGecko ID so price validation works for it."""
+    _CG_IDS[symbol.upper()] = coingecko_id
+
+
+def lookup_coingecko_id(symbol: str) -> str | None:
+    """
+    Search CoinGecko for the ID of a coin by ticker symbol.
+    Returns the ID string (e.g. "pepe") or None if not found.
+    """
+    sym = symbol.upper()
+    if sym in _CG_IDS:
+        return _CG_IDS[sym]
+    try:
+        resp = requests.get(
+            "https://api.coingecko.com/api/v3/search",
+            params={"query": symbol},
+            headers={"Accept": "application/json"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        for coin in resp.json().get("coins", []):
+            if coin.get("symbol", "").upper() == sym:
+                return coin["id"]
+    except Exception as e:
+        log.warning(f"[DataValidator] CoinGecko ID lookup failed for {symbol}: {e}")
+    return None
 
 
 def validate_news_freshness(articles: list[dict]) -> dict:

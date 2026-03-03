@@ -1,10 +1,18 @@
 # Environment and secrets
 .env
 
+# Coinbase CDP API key file (contains private key – NEVER commit this)
+cdp_api_key.json
+cdp_api_key.json
+*.pem
+
 # Bot state files
 portfolio.json
 trades.json
 bot.log
+learning.json
+live_positions.json
+live_trades.json
 
 # Python
 __pycache__/

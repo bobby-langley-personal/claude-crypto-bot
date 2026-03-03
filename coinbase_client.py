@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Fetch cryptocurrency prices from the Coinbase public API.
 No authentication needed for price data - it's freely available.

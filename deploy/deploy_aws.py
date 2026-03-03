@@ -45,7 +45,7 @@ import paramiko
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 REGION        = "us-east-1"
-INSTANCE_TYPE = "t2.micro"          # Free tier eligible
+INSTANCE_TYPE = "t3.micro"          # Free tier eligible
 KEY_NAME      = "crypto-bot-key"
 SG_NAME       = "crypto-bot-sg"
 INSTANCE_TAG  = "crypto-sentiment-bot"
@@ -350,7 +350,8 @@ def _setup_service(ip: str, key_path: Path) -> None:
     ssh.connect(ip, username="ec2-user", pkey=key)
 
     log.info("      Installing Python dependencies…")
-    _ssh_run(ssh, f"pip3 install -r {REMOTE_DIR}/requirements.txt --quiet")
+    out = _ssh_run(ssh, f"python3 -m pip install -r {REMOTE_DIR}/requirements.txt 2>&1 | tail -5")
+    log.info(f"      {out}")
 
     service_content = f"""[Unit]
 Description=Crypto Sentiment Bot Dashboard
@@ -360,6 +361,7 @@ After=network.target
 Type=simple
 User=ec2-user
 WorkingDirectory={REMOTE_DIR}
+EnvironmentFile=-{REMOTE_DIR}/.env
 ExecStart=/usr/bin/python3 -m uvicorn web_server:app --host 0.0.0.0 --port {DASHBOARD_PORT}
 Restart=always
 RestartSec=10

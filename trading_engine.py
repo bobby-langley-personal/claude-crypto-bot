@@ -1,39 +1,78 @@
+from __future__ import annotations
 """
 Trading engine – the brain of the bot.
 
 Each call to run_cycle() does one full loop:
   1. Fetch current prices for all watched coins.
   2. Validate prices against CoinGecko (cross-source check).
-  3. Check open positions for take-profit / stop-loss exits.
+  3. Check open positions for take-profit / stop-loss / overbought exits.
   4. For coins we don't hold, fetch news and ask Claude for a sentiment score.
-  5. Validate the sentiment score before trusting it.
-  6. Buy any coin whose score is >= SENTIMENT_BUY_THRESHOLD (and passes validation).
+  5. Check RSI/MACD/Bollinger Bands — block buy if technically overbought.
+  6. Validate the sentiment score before trusting it.
+  7. Buy any coin whose score is >= threshold (and passes all checks).
+
+Risk parameters and the coin watchlist are set via update_params() /
+update_coins() so the dashboard can change them at runtime without restart.
 """
 import logging
 from datetime import datetime, timezone
-from config import (
-    COINS,
-    SENTIMENT_BUY_THRESHOLD,
-    TAKE_PROFIT_PCT,
-    STOP_LOSS_PCT,
-    TRADE_AMOUNT_USD,
-    MAX_POSITIONS,
-)
+
+from config import COINS
 from coinbase_client import get_all_prices
 from news_client import get_news, format_articles_for_prompt
 from sentiment_analyzer import analyze_sentiment
 from paper_portfolio import PaperPortfolio
-from data_validator import validate_prices, validate_sentiment
+from data_validator import validate_prices, validate_sentiment, _CG_IDS
+from technical_indicators import get_signals
 
 log = logging.getLogger(__name__)
 
+# RSI threshold above which we block new entries (overbought)
+RSI_OVERBOUGHT_BLOCK = 72
+# RSI threshold above which we exit existing positions early
+RSI_OVERBOUGHT_EXIT  = 80
+
 
 class TradingEngine:
-    def __init__(self, portfolio: PaperPortfolio):
+    def __init__(self, portfolio: PaperPortfolio, params: dict, coins: dict = None):
+        """
+        Args:
+            portfolio: PaperPortfolio (or LivePortfolio) instance
+            params:    Risk-profile dict (see config.RISK_PROFILES)
+            coins:     Watchlist dict {symbol: {product_id, news_query}}.
+                       Defaults to config.COINS if None.
+        """
         self.portfolio        = portfolio
-        self.last_analysis:   dict = {}  # symbol -> full analysis record for dashboard
-        self.last_prices:     dict = {}  # symbol -> float
-        self.last_validation: dict = {}  # symbol -> price validation result
+        self._coins           = dict(coins) if coins else dict(COINS)
+        self.last_analysis:   dict = {}
+        self.last_prices:     dict = {}
+        self.last_validation: dict = {}
+        self._apply_params(params)
+
+    # ── Runtime updates ───────────────────────────────────────────────────────
+
+    def _apply_params(self, params: dict) -> None:
+        self.threshold        = params["sentiment_buy_threshold"]
+        self.take_profit_pct  = params["take_profit_pct"]
+        self.stop_loss_pct    = params["stop_loss_pct"]
+        self.trade_amount_usd = params["trade_amount_usd"]
+        self.max_positions    = params["max_positions"]
+
+    def update_params(self, params: dict) -> None:
+        """Hot-reload risk parameters without restarting the bot."""
+        self._apply_params(params)
+        log.info(
+            f"[Engine] Params updated: threshold={self.threshold}  "
+            f"TP=+{self.take_profit_pct}%  SL={self.stop_loss_pct}%  "
+            f"size=${self.trade_amount_usd}  max={self.max_positions}"
+        )
+
+    def update_coins(self, coins: dict) -> None:
+        """Hot-reload the watchlist without restarting the bot."""
+        self._coins = dict(coins)
+        log.info(f"[Engine] Watchlist updated: {list(self._coins.keys())}")
+
+    # ── Main cycle ────────────────────────────────────────────────────────────
 
     def run_cycle(self) -> dict:
         """
@@ -53,7 +92,7 @@ class TradingEngine:
         log.info("=" * 60)
         log.info(f"Cycle start: {ts}")
 
-        symbols = list(COINS.keys())
+        symbols = list(self._coins.keys())
         prices  = get_all_prices(symbols)
 
         if not prices:
@@ -95,20 +134,43 @@ class TradingEngine:
             pct = pnl["pnl_pct"]
             log.info(f"  {symbol} P&L: {pct:+.2f}%")
 
-            if pct >= TAKE_PROFIT_PCT:
-                log.info(f"  -> TAKE PROFIT ({pct:.1f}% >= +{TAKE_PROFIT_PCT}%)")
-                trade = self.portfolio.sell(symbol, price, reason="take_profit")
+            if pct >= self.take_profit_pct:
+                log.info(f"  -> TAKE PROFIT ({pct:.1f}% >= +{self.take_profit_pct}%)")
+                trade = self.portfolio.sell(
+                    symbol, price, reason="take_profit",
+                    reason_detail=f"+{pct:.1f}% reached take-profit target (+{self.take_profit_pct}%)",
+                )
                 if trade:
                     summary["sells"].append(trade)
 
-            elif pct <= STOP_LOSS_PCT:
-                log.info(f"  -> STOP LOSS ({pct:.1f}% <= {STOP_LOSS_PCT}%)")
-                trade = self.portfolio.sell(symbol, price, reason="stop_loss")
+            elif pct <= self.stop_loss_pct:
+                log.info(f"  -> STOP LOSS ({pct:.1f}% <= {self.stop_loss_pct}%)")
+                trade = self.portfolio.sell(
+                    symbol, price, reason="stop_loss",
+                    reason_detail=f"{pct:.1f}% triggered stop-loss ({self.stop_loss_pct}%)",
+                )
                 if trade:
                     summary["sells"].append(trade)
+
+            else:
+                # Check RSI overbought exit
+                cg_id  = _CG_IDS.get(symbol)
+                sigs   = get_signals(symbol, price, cg_id=cg_id)
+                rsi    = sigs.get("rsi")
+                if rsi is not None and rsi > RSI_OVERBOUGHT_EXIT:
+                    log.info(
+                        f"  -> OVERBOUGHT EXIT  {symbol}  RSI={rsi:.0f} "
+                        f"> {RSI_OVERBOUGHT_EXIT}"
+                    )
+                    trade = self.portfolio.sell(
+                        symbol, price, reason="overbought",
+                        reason_detail=f"RSI {rsi:.0f} exceeded overbought threshold ({RSI_OVERBOUGHT_EXIT})",
+                    )
+                    if trade:
+                        summary["sells"].append(trade)
 
         # ── Step 2: Look for buy opportunities ────────────────────────────────
-        open_slots       = MAX_POSITIONS - len(self.portfolio.positions)
+        open_slots       = self.max_positions - len(self.portfolio.positions)
         coins_to_analyse = [s for s in symbols if s not in self.portfolio.positions]
 
         if open_slots <= 0:
@@ -124,24 +186,50 @@ class TradingEngine:
             f"{open_slots} slot(s) available"
         )
 
-        scored: list[tuple[str, float]] = []
+        scored: list[tuple[str, float, str]] = []   # (symbol, score, reasoning)
 
         for symbol in coins_to_analyse:
-            coin_cfg = COINS[symbol]
+            coin_cfg = self._coins[symbol]
+            cg_id    = _CG_IDS.get(symbol)
 
-            # Fetch news
+            # ── Technical indicators ──────────────────────────────────────────
+            price = prices.get(symbol)
+            sigs  = get_signals(symbol, price or 0, cg_id=cg_id)
+            rsi   = sigs.get("rsi")
+
+            if rsi is not None and rsi > RSI_OVERBOUGHT_BLOCK:
+                log.info(
+                    f"  {symbol}: RSI {rsi:.0f} > {RSI_OVERBOUGHT_BLOCK} "
+                    f"(overbought) — skipping buy analysis"
+                )
+                self.last_analysis[symbol] = {
+                    "score":          None,
+                    "reasoning":      f"Skipped — RSI {rsi:.0f} overbought",
+                    "articles_count": 0,
+                    "source":         "—",
+                    "validation":     {"ok": True, "confidence": "medium", "badge": "⚠", "warnings": []},
+                    "technical":      sigs,
+                    "timestamp":      datetime.now(timezone.utc).strftime("%H:%M:%S"),
+                }
+                continue
+
+            if sigs.get("warnings"):
+                for w in sigs["warnings"]:
+                    log.warning(f"  [Technical] {w}")
+
+            # ── Fetch news ────────────────────────────────────────────────────
             articles  = get_news(coin_cfg["news_query"], coin_symbol=symbol)
             news_text = format_articles_for_prompt(articles)
             source    = articles[0]["source"] if articles else "none"
             log.info(f"  {symbol}: {len(articles)} article(s) from {source}")
 
-            # Ask Claude for a sentiment score
+            # ── Ask Claude for a sentiment score ──────────────────────────────
             sentiment = analyze_sentiment(symbol, news_text)
             score     = sentiment["score"]
-            reasoning = sentiment["reasoning"]
-            log.info(f"  {symbol} Claude score: {score:.1f}/10 — {reasoning[:80]}")
+            sent_reason = sentiment["reasoning"]
+            log.info(f"  {symbol} Claude score: {score:.1f}/10 — {sent_reason[:80]}")
 
-            # Validate the sentiment result
+            # ── Validate the sentiment result ─────────────────────────────────
             val = validate_sentiment(symbol, score, len(articles))
             log.info(
                 f"  {symbol} sentiment validation: "
@@ -149,23 +237,40 @@ class TradingEngine:
                 + (f" — {val['warnings'][0]}" if val["warnings"] else "")
             )
 
-            # Store everything for the dashboard
+            # ── Build rich reasoning string ───────────────────────────────────
+            macd_dir = ""
+            if sigs.get("macd"):
+                macd_dir = "▲ bullish" if sigs["macd"]["bullish"] else "▼ bearish"
+            bb_txt = ""
+            if sigs.get("bollinger"):
+                pb = sigs["bollinger"]["pct_b"]
+                bb_txt = f"BB {pb:.0%} ({'oversold' if pb < 0.2 else 'overbought' if pb > 0.8 else 'midrange'})"
+
+            tech_summary = sigs.get("summary", "no technicals")
+            reasoning = (
+                f"Sentiment {score:.1f}/10 · {tech_summary} · "
+                f"{len(articles)} article(s) from {source} · "
+                f"{sent_reason[:120]}"
+            )
+
+            # ── Store for dashboard ───────────────────────────────────────────
             self.last_analysis[symbol] = {
                 "score":          score,
-                "reasoning":      reasoning,
+                "reasoning":      sent_reason,
                 "articles_count": len(articles),
                 "source":         source,
                 "validation":     val,
+                "technical":      sigs,
                 "timestamp":      datetime.now(timezone.utc).strftime("%H:%M:%S"),
             }
 
             summary["analyses"][symbol] = {"score": score, "reasoning": reasoning}
-            scored.append((symbol, score))
+            scored.append((symbol, score, reasoning))
 
-        # Sort by score, buy the best opportunities first
+        # Sort by score descending — buy best opportunity first
         scored.sort(key=lambda x: x[1], reverse=True)
 
-        for symbol, score in scored:
+        for symbol, score, reasoning in scored:
             if open_slots <= 0:
                 break
 
@@ -176,9 +281,7 @@ class TradingEngine:
                 log.warning(f"  {symbol}: no price available, skipping")
                 continue
 
-            if score >= SENTIMENT_BUY_THRESHOLD:
-                # Warn but still allow the trade if confidence is medium.
-                # Block trade only if confidence is low (zero articles).
+            if score >= self.threshold:
                 if val["confidence"] == "low":
                     log.warning(
                         f"  {symbol}: score {score:.1f} meets threshold but "
@@ -186,19 +289,23 @@ class TradingEngine:
                     )
                     continue
 
+                sigs = self.last_analysis[symbol].get("technical", {})
                 log.info(
-                    f"  BUY: {symbol} scored {score:.1f}/10 "
-                    f"(threshold: {SENTIMENT_BUY_THRESHOLD}, "
-                    f"confidence: {val['confidence']})"
+                    f"  BUY: {symbol} scored {score:.1f}/10  {sigs.get('summary', '')}  "
+                    f"(threshold: {self.threshold}, confidence: {val['confidence']})"
                 )
-                trade = self.portfolio.buy(symbol, price, TRADE_AMOUNT_USD)
+                trade = self.portfolio.buy(
+                    symbol, price, self.trade_amount_usd,
+                    sentiment_score=score,
+                    reasoning=reasoning,
+                )
                 if trade:
                     summary["buys"].append(trade)
                     open_slots -= 1
             else:
                 log.info(
                     f"  PASS: {symbol} scored {score:.1f}/10 "
-                    f"< threshold {SENTIMENT_BUY_THRESHOLD}"
+                    f"< threshold {self.threshold}"
                 )
 
         return summary

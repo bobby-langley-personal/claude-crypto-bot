@@ -10,6 +10,10 @@ fastapi>=0.100.0
 uvicorn[standard]>=0.23.0   # includes websockets + httptools
 jinja2>=3.1.0
 
+# Real trading via Coinbase Advanced Trade / CDP API
+# Supports the cdp_api_key.json key file format from developer.coinbase.com
+coinbase-advanced-py>=1.7.0
+
 # AWS deployment (used by deploy/deploy_aws.py only)
 boto3>=1.28.0
 paramiko>=3.0.0

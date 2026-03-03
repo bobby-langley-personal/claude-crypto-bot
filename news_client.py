@@ -1,157 +1,222 @@
+from __future__ import annotations
 """
-Fetch crypto news from two sources:
+Fetch crypto news headlines and market sentiment.
 
-  PRIMARY  – CryptoPanic API  (https://cryptopanic.com)
-             Coin-filtered news feed; free API key available at cryptopanic.com
-             Set CRYPTOPANIC_API_KEY in .env to enable.
+  PRIMARY  – RSS feeds from CoinTelegraph, Decrypt, Bitcoinist (no API key needed)
+             Filtered by coin name / ticker in the headline.
 
-  FALLBACK – Reddit public JSON
-             r/<coin-subreddit> + r/CryptoCurrency; no auth required.
-             Used automatically if CryptoPanic is unavailable or unconfigured.
+  MARKET   – Alternative.me Fear & Greed Index (free, no key)
+             Injected as context line into the formatted prompt.
 
-# NewsAPI disabled – 401 with current key format; may re-enable later.
+  LEGACY   – CryptoPanic / Reddit kept as stubs but both are currently down.
 """
 import logging
-import requests
+import threading
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
-from config import CRYPTOPANIC_API_KEY
+
+import re
+
+import requests
 
 log = logging.getLogger(__name__)
 
-# Reddit requires a descriptive User-Agent or it blocks requests
-_REDDIT_UA = "crypto-sentiment-bot/1.0 (educational paper trading project)"
 
-# Each coin's most relevant subreddit(s), most specific first
-_COIN_SUBREDDITS: dict[str, list[str]] = {
-    "BTC":  ["Bitcoin",  "CryptoCurrency"],
-    "ETH":  ["ethereum", "CryptoCurrency"],
-    "SOL":  ["solana",   "CryptoCurrency"],
-    "DOGE": ["dogecoin", "CryptoCurrency"],
+def _strip_html(text: str) -> str:
+    """Remove HTML tags and normalise whitespace."""
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"&[a-z]+;", " ", text)   # &amp; &nbsp; etc.
+    return re.sub(r"\s+", " ", text).strip()
+
+_UA = "Mozilla/5.0 crypto-bot/1.0 (educational paper trading)"
+
+# ── RSS sources ───────────────────────────────────────────────────────────────
+
+_RSS_FEEDS = [
+    ("CoinTelegraph", "https://cointelegraph.com/rss"),
+    ("Decrypt",       "https://decrypt.co/feed"),
+    ("Bitcoinist",    "https://bitcoinist.com/feed/"),
+]
+
+# coin symbol → names/keywords to search headlines for
+_COIN_KEYWORDS: dict[str, list[str]] = {
+    "BTC":   ["bitcoin", "btc"],
+    "ETH":   ["ethereum", "eth", "ether"],
+    "SOL":   ["solana", "sol"],
+    "DOGE":  ["dogecoin", "doge"],
+    "SHIB":  ["shiba", "shib"],
+    "PEPE":  ["pepe"],
+    "BONK":  ["bonk"],
+    "WIF":   ["dogwifhat", "wif"],
+    "FLOKI": ["floki"],
+    "ADA":   ["cardano", "ada"],
+    "AVAX":  ["avalanche", "avax"],
+    "LINK":  ["chainlink", "link"],
+    "DOT":   ["polkadot", "dot"],
+    "XRP":   ["ripple", "xrp"],
+    "LTC":   ["litecoin", "ltc"],
+    "ARB":   ["arbitrum", "arb"],
+    "OP":    ["optimism"],
+    "SUI":   ["sui"],
 }
 
-_CRYPTOPANIC_URL = "https://cryptopanic.com/api/v1/posts/"
+# Shared RSS cache: feed_url → (timestamp, list[dict])
+_rss_cache: dict[str, tuple[float, list[dict]]] = {}
+_rss_lock = threading.Lock()
+_RSS_TTL = 600   # seconds
 
 
-# ── CryptoPanic ───────────────────────────────────────────────────────────────
+def register_coin_subreddits(symbol: str, subreddits: list[str]) -> None:
+    """Kept for backwards-compat; Reddit is currently blocked (403)."""
+    pass
 
-def _fetch_cryptopanic(coin_symbol: str, max_articles: int) -> list[dict]:
-    """Fetch coin-specific news from the CryptoPanic API."""
-    if not CRYPTOPANIC_API_KEY:
-        return []
+
+# ── Fear & Greed ──────────────────────────────────────────────────────────────
+
+_fg_cache: tuple[float, dict] | None = None
+_fg_lock = threading.Lock()
+_FG_TTL = 1800   # 30 min
+
+
+def _get_fear_greed() -> dict | None:
+    """Return the latest Fear & Greed data dict, cached 30 min."""
+    global _fg_cache
+    import time
+    with _fg_lock:
+        if _fg_cache and time.time() - _fg_cache[0] < _FG_TTL:
+            return _fg_cache[1]
+        try:
+            r = requests.get(
+                "https://api.alternative.me/fng/?limit=1",
+                timeout=6,
+            )
+            r.raise_for_status()
+            data = r.json()["data"][0]
+            _fg_cache = (time.time(), data)
+            return data
+        except Exception as e:
+            log.debug(f"Fear&Greed fetch failed: {e}")
+            return _fg_cache[1] if _fg_cache else None
+
+
+# ── RSS helpers ───────────────────────────────────────────────────────────────
+
+def _fetch_feed(name: str, url: str) -> list[dict]:
+    """Fetch and parse one RSS feed, with a 10-minute cache."""
+    import time
+    with _rss_lock:
+        cached = _rss_cache.get(url)
+        if cached and time.time() - cached[0] < _RSS_TTL:
+            return cached[1]
 
     try:
-        resp = requests.get(
-            _CRYPTOPANIC_URL,
-            params={
-                "auth_token": CRYPTOPANIC_API_KEY,
-                "currencies": coin_symbol,   # e.g. "BTC"
-                "kind":       "news",
-                "public":     "true",
-            },
-            timeout=10,
-        )
-        resp.raise_for_status()
+        r = requests.get(url, headers={"User-Agent": _UA}, timeout=10)
+        r.raise_for_status()
+        root = ET.fromstring(r.text)
+        articles = []
+        for item in root.findall(".//item"):
+            title = (item.findtext("title") or "").strip()
+            desc  = (item.findtext("description") or "").strip()
+            pub   = (item.findtext("pubDate") or "")
+            if not title:
+                continue
+            # Parse date
+            try:
+                dt = datetime.strptime(pub, "%a, %d %b %Y %H:%M:%S %z")
+                date = dt.strftime("%Y-%m-%d")
+            except Exception:
+                date = ""
+            articles.append({
+                "title":       _strip_html(title),
+                "description": _strip_html(desc)[:300],
+                "publishedAt": date,
+                "source":      name,
+            })
 
-        posts = resp.json().get("results", [])[:max_articles]
-        return [
-            {
-                "title":       p.get("title", ""),
-                "description": "",                       # CryptoPanic free tier omits body
-                "publishedAt": (p.get("published_at") or "")[:10],
-                "source":      "CryptoPanic",
-            }
-            for p in posts
-        ]
+        with _rss_lock:
+            _rss_cache[url] = (time.time(), articles)
+        return articles
 
-    except requests.HTTPError as e:
-        log.warning(f"CryptoPanic HTTP error for {coin_symbol}: {e}")
-        return []
     except Exception as e:
-        log.warning(f"CryptoPanic fetch failed for {coin_symbol}: {e}")
+        log.warning(f"RSS fetch failed ({name}): {e}")
+        with _rss_lock:
+            if url in _rss_cache:
+                return _rss_cache[url][1]   # return stale on error
         return []
 
 
-# ── Reddit ────────────────────────────────────────────────────────────────────
+def _fetch_rss(coin_symbol: str, max_articles: int) -> list[dict]:
+    """Fetch all RSS feeds and filter by coin relevance."""
+    keywords = _COIN_KEYWORDS.get(coin_symbol.upper(), [coin_symbol.lower()])
+    # Always include the bare symbol (e.g. "SOL") as a keyword
+    if coin_symbol.lower() not in keywords:
+        keywords = [coin_symbol.lower()] + keywords
 
-def _fetch_reddit(coin_symbol: str, max_articles: int) -> list[dict]:
-    """Fetch hot posts from coin-specific subreddits via public JSON API."""
-    articles: list[dict] = []
-    subreddits = _COIN_SUBREDDITS.get(coin_symbol, ["CryptoCurrency"])
+    matched: list[dict] = []
+    general: list[dict] = []   # crypto-general articles as fallback
 
-    for sub in subreddits:
-        if len(articles) >= max_articles:
-            break
-        try:
-            resp = requests.get(
-                f"https://www.reddit.com/r/{sub}/hot.json",
-                params={"limit": 15},
-                headers={"User-Agent": _REDDIT_UA},
-                timeout=10,
-            )
-            resp.raise_for_status()
+    for name, url in _RSS_FEEDS:
+        articles = _fetch_feed(name, url)
+        for a in articles:
+            text = (a["title"] + " " + a["description"]).lower()
+            if any(kw in text for kw in keywords):
+                matched.append(a)
+            else:
+                general.append(a)
 
-            for post in resp.json()["data"]["children"]:
-                d = post["data"]
-                if d.get("stickied"):      # skip mod/pinned posts
-                    continue
-                articles.append({
-                    "title":       d.get("title", ""),
-                    "description": (d.get("selftext") or "")[:250].strip(),
-                    "publishedAt": datetime.fromtimestamp(
-                        d.get("created_utc", 0), tz=timezone.utc
-                    ).strftime("%Y-%m-%d"),
-                    "source":      f"r/{sub}",
-                })
+    # Return coin-specific first, pad with general crypto news if short
+    results = matched[:max_articles]
+    if len(results) < max_articles:
+        needed = max_articles - len(results)
+        results += general[:needed]
 
-        except Exception as e:
-            log.warning(f"Reddit fetch failed for r/{sub}: {e}")
-
-    return articles[:max_articles]
+    return results[:max_articles]
 
 
-# ── Public interface ──────────────────────────────────────────────────────────
+# ── Public interface ───────────────────────────────────────────────────────────
 
 def get_news(query: str, max_articles: int = 10, coin_symbol: str = None) -> list[dict]:
     """
-    Fetch recent news for a coin.
+    Fetch recent news for a coin from RSS feeds.
 
     Args:
-        query:        Human-readable label (e.g. "Bitcoin BTC") – used to
-                      infer coin_symbol when it isn't passed explicitly.
-        max_articles: Max number of articles/posts to return.
-        coin_symbol:  Ticker to query (e.g. "BTC"). Inferred from query if omitted.
+        query:        Human-readable label (e.g. "Bitcoin BTC")
+        max_articles: Max number of articles to return.
+        coin_symbol:  Ticker (e.g. "BTC"). Inferred from query if omitted.
 
     Returns:
         List of dicts: {"title", "description", "publishedAt", "source"}
-        Returns [] if both sources fail – the bot handles this gracefully.
     """
     if coin_symbol is None:
-        for sym in _COIN_SUBREDDITS:
+        for sym in _COIN_KEYWORDS:
             if sym.upper() in query.upper():
                 coin_symbol = sym
                 break
         if coin_symbol is None:
             coin_symbol = "BTC"
 
-    # 1. Try CryptoPanic
-    articles = _fetch_cryptopanic(coin_symbol, max_articles)
-    if articles:
-        log.info(f"  {coin_symbol}: {len(articles)} article(s) from CryptoPanic")
-        return articles
-
-    # 2. Fall back to Reddit
-    log.info(f"  {coin_symbol}: CryptoPanic unavailable – using Reddit")
-    articles = _fetch_reddit(coin_symbol, max_articles)
-    log.info(f"  {coin_symbol}: {len(articles)} post(s) from Reddit")
+    articles = _fetch_rss(coin_symbol, max_articles)
+    log.info(f"  {coin_symbol}: {len(articles)} article(s) from RSS feeds")
     return articles
 
 
 def format_articles_for_prompt(articles: list[dict]) -> str:
-    """Format a list of articles into a readable block for Claude to analyse."""
-    if not articles:
-        return "No recent news articles found."
-
+    """Format articles + Fear & Greed index into a block for Claude to analyse."""
     lines = []
+
+    # Inject market sentiment index at the top
+    fg = _get_fear_greed()
+    if fg:
+        lines.append(
+            f"[MARKET SENTIMENT] Fear & Greed Index: {fg['value']}/100 "
+            f"({fg['value_classification']}) - overall market mood context."
+        )
+        lines.append("")
+
+    if not articles:
+        lines.append("No recent news articles found.")
+        return "\n".join(lines)
+
     for i, a in enumerate(articles, 1):
         source = a.get("source", "")
         date   = (a.get("publishedAt") or "")[:10]

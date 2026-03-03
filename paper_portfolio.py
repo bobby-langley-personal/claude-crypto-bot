@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Paper (simulated) trading portfolio.
 
@@ -70,14 +71,23 @@ class PaperPortfolio:
 
     # ── Trading actions ───────────────────────────────────────────────────────
 
-    def buy(self, symbol: str, price: float, amount_usd: float) -> dict | None:
+    def buy(
+        self,
+        symbol: str,
+        price: float,
+        amount_usd: float,
+        sentiment_score: float | None = None,
+        reasoning: str | None = None,
+    ) -> dict | None:
         """
         Simulate buying a coin.
 
         Args:
-            symbol:     Coin ticker, e.g. "BTC"
-            price:      Current market price
-            amount_usd: Dollar amount to spend
+            symbol:          Coin ticker, e.g. "BTC"
+            price:           Current market price
+            amount_usd:      Dollar amount to spend
+            sentiment_score: Claude's sentiment score at time of buy (stored for
+                             the AI strategy learner to analyse later)
 
         Returns:
             Trade record dict if successful, None otherwise.
@@ -101,6 +111,7 @@ class PaperPortfolio:
             "entry_price": price,
             "cost_basis":  amount_usd,
             "entry_time":  _now_iso(),
+            "reasoning":   reasoning or "",
         }
 
         trade = {
@@ -111,6 +122,10 @@ class PaperPortfolio:
             "total_usd": amount_usd,
             "timestamp": _now_iso(),
         }
+        if sentiment_score is not None:
+            trade["sentiment_score"] = round(sentiment_score, 1)
+        if reasoning:
+            trade["reasoning"] = reasoning
         self.trade_history.append(trade)
         self._save()
 
@@ -120,7 +135,7 @@ class PaperPortfolio:
         )
         return trade
 
-    def sell(self, symbol: str, price: float, reason: str = "manual") -> dict | None:
+    def sell(self, symbol: str, price: float, reason: str = "manual", reason_detail: str | None = None) -> dict | None:
         """
         Simulate selling an entire position.
 
@@ -145,6 +160,8 @@ class PaperPortfolio:
 
         self.cash += proceeds
 
+        buy_reasoning = self.positions.get(symbol, {}).get("reasoning", "")
+
         trade = {
             "action":    "SELL",
             "symbol":    symbol,
@@ -156,6 +173,10 @@ class PaperPortfolio:
             "reason":    reason,
             "timestamp": _now_iso(),
         }
+        if reason_detail:
+            trade["reason_detail"] = reason_detail
+        if buy_reasoning:
+            trade["buy_reasoning"] = buy_reasoning
         self.trade_history.append(trade)
         self._save()
 
