@@ -65,6 +65,11 @@ class BotController:
         self.engine:    TradingEngine   | None = None
         self.learner:   StrategyLearner        = StrategyLearner()
 
+        # ── Shadow portfolios (paper mode only) ───────────────────────────────
+        # One per non-active risk profile; share coin data, skip API calls
+        self._shadow_portfolios: dict[str, PaperPortfolio] = {}
+        self._shadow_engines:    dict[str, TradingEngine]  = {}
+
         # ── Runtime state ─────────────────────────────────────────────────────
         self._running     = False
         self._status      = "stopped"
@@ -121,6 +126,25 @@ class BotController:
                     params=self._risk_params,
                     coins=self._coins,
                 )
+
+                # Initialise shadow portfolios (paper mode only, once per lifetime)
+                if self._paper_trading and not self._shadow_portfolios:
+                    for level, params in RISK_PROFILES.items():
+                        if level == self._risk_level:
+                            continue
+                        shadow_p = PaperPortfolio(
+                            portfolio_file=f"shadow_{level}_portfolio.json",
+                            trades_file=f"shadow_{level}_trades.json",
+                        )
+                        shadow_e = TradingEngine(
+                            shadow_p, params=dict(params), coins=self._coins
+                        )
+                        self._shadow_portfolios[level] = shadow_p
+                        self._shadow_engines[level]    = shadow_e
+                    log.info(
+                        f"[Shadow] Initialized {len(self._shadow_portfolios)} "
+                        "shadow portfolio(s): " + ", ".join(self._shadow_portfolios)
+                    )
             else:
                 # Restarted — re-apply current settings to existing engine
                 self.engine.update_params(self._risk_params)
@@ -239,6 +263,8 @@ class BotController:
 
         if self.engine:
             self.engine.update_coins(self._coins)
+        for se in self._shadow_engines.values():
+            se.update_coins(self._coins)
 
         log.info(f"[Coins] Added {sym} to watchlist (cg_id={coingecko_id or 'unknown'})")
         return {
@@ -257,6 +283,8 @@ class BotController:
 
         if self.engine:
             self.engine.update_coins(self._coins)
+        for se in self._shadow_engines.values():
+            se.update_coins(self._coins)
 
         log.info(f"[Coins] Removed {sym} from watchlist")
         return {"ok": True, "message": f"{sym} removed from watchlist"}
@@ -500,14 +528,20 @@ class BotController:
             return self._api_status
 
         status: dict = {}
+        errors: dict = {}
 
         # Coinbase public prices
         try:
             from coinbase_client import get_all_prices
             p = get_all_prices(["BTC"])
-            status["coinbase"] = bool(p and "BTC" in p)
-        except Exception:
+            if p and "BTC" in p:
+                status["coinbase"] = True
+            else:
+                status["coinbase"] = False
+                errors["coinbase"] = "No BTC price returned — API may be rate-limited or down"
+        except Exception as e:
             status["coinbase"] = False
+            errors["coinbase"] = str(e)
 
         # CoinGecko
         try:
@@ -515,9 +549,14 @@ class BotController:
                 "https://api.coingecko.com/api/v3/ping",
                 timeout=5, headers={"Accept": "application/json"},
             )
-            status["coingecko"] = r.status_code == 200
-        except Exception:
+            if r.status_code == 200:
+                status["coingecko"] = True
+            else:
+                status["coingecko"] = False
+                errors["coingecko"] = f"HTTP {r.status_code} — {r.text[:200]}"
+        except Exception as e:
             status["coingecko"] = False
+            errors["coingecko"] = str(e)
 
         # RSS news feeds (CoinTelegraph, Decrypt, Bitcoinist)
         try:
@@ -526,20 +565,34 @@ class BotController:
                 headers={"User-Agent": "crypto-bot/1.0"},
                 timeout=5,
             )
-            status["news_rss"] = r.status_code == 200
-        except Exception:
+            if r.status_code == 200:
+                status["news_rss"] = True
+            else:
+                status["news_rss"] = False
+                errors["news_rss"] = f"HTTP {r.status_code} from CoinTelegraph RSS — {r.text[:200]}"
+        except Exception as e:
             status["news_rss"] = False
+            errors["news_rss"] = str(e)
 
         # Fear & Greed index
         try:
             r = requests.get("https://api.alternative.me/fng/?limit=1", timeout=5)
-            status["fear_greed"] = r.status_code == 200
-        except Exception:
+            if r.status_code == 200:
+                status["fear_greed"] = True
+            else:
+                status["fear_greed"] = False
+                errors["fear_greed"] = f"HTTP {r.status_code} — {r.text[:200]}"
+        except Exception as e:
             status["fear_greed"] = False
+            errors["fear_greed"] = str(e)
 
         # Anthropic (check if key is set — don't make a real API call to save credits)
         from config import ANTHROPIC_API_KEY
         status["anthropic"] = bool(ANTHROPIC_API_KEY)
+        if not ANTHROPIC_API_KEY:
+            errors["anthropic"] = "ANTHROPIC_API_KEY not set in .env — Claude cannot run"
+
+        status["errors"] = errors
 
         self._api_status    = status
         self._api_status_ts = _time.time()
@@ -658,6 +711,17 @@ class BotController:
                 buys   = len(result.get("buys",  []))
                 sells  = len(result.get("sells", []))
 
+                # Shadow cycles — reuse prices + analysis, no extra API calls
+                if self._shadow_engines and result.get("prices"):
+                    for level, shadow_engine in self._shadow_engines.items():
+                        try:
+                            shadow_engine.run_shadow_cycle(
+                                result["prices"],
+                                dict(self.engine.last_analysis),
+                            )
+                        except Exception as e:
+                            log.debug(f"[Shadow:{level}] cycle error: {e}")
+
                 # Market health check — may trigger emergency stop
                 if not self.check_market_health(result.get("prices", {})):
                     break  # emergency stop was triggered
@@ -687,7 +751,7 @@ class BotController:
                 break
 
             next_dt = datetime.now(timezone.utc) + timedelta(seconds=interval)
-            self._next_check = next_dt.strftime("%H:%M:%S UTC")
+            self._next_check = next_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
             # Sleep in small chunks so stop() responds quickly
             for _ in range(interval // 5):
@@ -706,6 +770,44 @@ class BotController:
             except Exception as e:
                 log.warning(f"Price refresh error: {e}")
             time.sleep(60)
+
+    # ── Shadow comparison ─────────────────────────────────────────────────────
+
+    def get_shadow_comparison(self, prices: dict) -> list[dict]:
+        """
+        Return a comparison row for every risk profile (active + shadows),
+        sorted low → degen so the dashboard can render a stable leaderboard.
+        """
+        starting = self._starting_value
+        rows: list[dict] = []
+
+        all_portfolios: dict[str, object] = {}
+        if self.portfolio:
+            all_portfolios[self._risk_level] = self.portfolio
+        all_portfolios.update(self._shadow_portfolios)
+
+        for level in ("low", "medium", "high", "degen"):
+            portfolio = all_portfolios.get(level)
+            if portfolio is None:
+                continue
+            total   = portfolio.get_total_value(prices)
+            pnl     = total - starting
+            pnl_pct = (pnl / starting * 100) if starting else 0.0
+            profile = RISK_PROFILES[level]
+            rows.append({
+                "level":       level,
+                "label":       profile["label"],
+                "color":       profile["color"],
+                "active":      level == self._risk_level,
+                "total":       round(total,   2),
+                "pnl_usd":     round(pnl,     2),
+                "pnl_pct":     round(pnl_pct, 2),
+                "positions":   len(portfolio.positions),
+                "max_pos":     profile["max_positions"],
+                "trade_count": len(portfolio.trade_history),
+                "threshold":   profile["sentiment_buy_threshold"],
+            })
+        return rows
 
     # ── State snapshot ────────────────────────────────────────────────────────
 
@@ -824,4 +926,5 @@ class BotController:
                 "auto_applied": insight.get("auto_applied", []),
                 "patterns":    insight.get("patterns", []),
             },
+            "shadows": self.get_shadow_comparison(prices),
         }

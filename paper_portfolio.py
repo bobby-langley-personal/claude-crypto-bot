@@ -25,7 +25,13 @@ class PaperPortfolio:
         trade_history: All completed trades (list of dicts)
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        portfolio_file: str | None = None,
+        trades_file: str | None = None,
+    ):
+        self._portfolio_file = portfolio_file or PORTFOLIO_FILE
+        self._trades_file    = trades_file    or TRADES_FILE
         self.cash: float = PAPER_STARTING_CASH
         self.positions: dict = {}
         self.trade_history: list = []
@@ -35,9 +41,9 @@ class PaperPortfolio:
 
     def _load(self):
         """Load saved state from disk (if it exists)."""
-        if Path(PORTFOLIO_FILE).exists():
+        if Path(self._portfolio_file).exists():
             try:
-                with open(PORTFOLIO_FILE) as f:
+                with open(self._portfolio_file) as f:
                     data = json.load(f)
                 self.cash      = data.get("cash", PAPER_STARTING_CASH)
                 self.positions = data.get("positions", {})
@@ -48,9 +54,9 @@ class PaperPortfolio:
             except Exception as e:
                 log.error(f"Could not load portfolio file: {e}")
 
-        if Path(TRADES_FILE).exists():
+        if Path(self._trades_file).exists():
             try:
-                with open(TRADES_FILE) as f:
+                with open(self._trades_file) as f:
                     self.trade_history = json.load(f)
             except Exception as e:
                 log.error(f"Could not load trades file: {e}")
@@ -62,11 +68,11 @@ class PaperPortfolio:
             "positions":    self.positions,
             "last_updated": _now_iso(),
         }
-        with open(PORTFOLIO_FILE, "w") as f:
+        with open(self._portfolio_file, "w") as f:
             json.dump(portfolio_data, f, indent=2)
 
         # Keep only the most recent 200 trades on disk
-        with open(TRADES_FILE, "w") as f:
+        with open(self._trades_file, "w") as f:
             json.dump(self.trade_history[-200:], f, indent=2)
 
     # ── Trading actions ───────────────────────────────────────────────────────
@@ -160,7 +166,7 @@ class PaperPortfolio:
 
         self.cash += proceeds
 
-        buy_reasoning = self.positions.get(symbol, {}).get("reasoning", "")
+        buy_reasoning = pos.get("reasoning", "")
 
         trade = {
             "action":    "SELL",

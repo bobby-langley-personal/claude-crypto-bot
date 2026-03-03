@@ -309,3 +309,85 @@ class TradingEngine:
                 )
 
         return summary
+
+    def run_shadow_cycle(self, prices: dict, pre_analysis: dict) -> dict:
+        """
+        Run a cycle using pre-fetched prices and pre-computed analysis.
+        Used by shadow portfolios so no extra API calls are made — the same
+        sentiment scores from the main engine cycle are reused, but each
+        shadow applies its own TP/SL/threshold parameters.
+        """
+        summary: dict = {"sells": [], "buys": []}
+
+        # ── Step 1: Check exits on open positions ─────────────────────────────
+        for symbol in list(self.portfolio.positions.keys()):
+            price = prices.get(symbol)
+            if price is None:
+                continue
+            pnl = self.portfolio.get_position_pnl(symbol, price)
+            if pnl is None:
+                continue
+            pct = pnl["pnl_pct"]
+
+            if pct >= self.take_profit_pct:
+                trade = self.portfolio.sell(
+                    symbol, price, reason="take_profit",
+                    reason_detail=f"+{pct:.1f}% reached take-profit (+{self.take_profit_pct}%)",
+                )
+                if trade:
+                    summary["sells"].append(trade)
+            elif pct <= self.stop_loss_pct:
+                trade = self.portfolio.sell(
+                    symbol, price, reason="stop_loss",
+                    reason_detail=f"{pct:.1f}% triggered stop-loss ({self.stop_loss_pct}%)",
+                )
+                if trade:
+                    summary["sells"].append(trade)
+            else:
+                tech = (pre_analysis.get(symbol) or {}).get("technical") or {}
+                rsi = tech.get("rsi")
+                if rsi is not None and rsi > RSI_OVERBOUGHT_EXIT:
+                    trade = self.portfolio.sell(
+                        symbol, price, reason="overbought",
+                        reason_detail=f"RSI {rsi:.0f} exceeded overbought threshold",
+                    )
+                    if trade:
+                        summary["sells"].append(trade)
+
+        # ── Step 2: Look for buy opportunities ────────────────────────────────
+        open_slots = self.max_positions - len(self.portfolio.positions)
+        if open_slots <= 0:
+            return summary
+
+        scored: list[tuple[str, float, str]] = []
+        for symbol, analysis in pre_analysis.items():
+            if symbol in self.portfolio.positions:
+                continue
+            score = analysis.get("score")
+            if score is None:
+                continue
+            tech = (analysis.get("technical") or {})
+            rsi = tech.get("rsi")
+            if rsi is not None and rsi > RSI_OVERBOUGHT_BLOCK:
+                continue
+            scored.append((symbol, score, analysis.get("reasoning", "")))
+
+        scored.sort(key=lambda x: x[1], reverse=True)
+
+        for symbol, score, reasoning in scored:
+            if open_slots <= 0:
+                break
+            if score < self.threshold:
+                continue
+            price = prices.get(symbol)
+            if price is None:
+                continue
+            trade = self.portfolio.buy(
+                symbol, price, self.trade_amount_usd,
+                sentiment_score=score, reasoning=reasoning,
+            )
+            if trade:
+                summary["buys"].append(trade)
+                open_slots -= 1
+
+        return summary

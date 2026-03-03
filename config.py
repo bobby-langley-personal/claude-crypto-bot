@@ -71,7 +71,7 @@ RISK_PROFILES = {
         "take_profit_pct":        20.0,   # Standard swing-trade target
         "stop_loss_pct":          -6.0,   # Allows normal crypto volatility
         "trade_amount_usd":       500.0,
-        "max_positions":           4,
+        "max_positions":          10,
         "description":            "Balanced · standard swing-trading parameters",
         "ideal_for":              "Large-caps + established alts",
         "color":                  "amber",
@@ -82,7 +82,7 @@ RISK_PROFILES = {
         "take_profit_pct":        40.0,   # Hold for bigger moves
         "stop_loss_pct":         -10.0,   # Wide stop — crypto can drop 10% intraday
         "trade_amount_usd":       750.0,
-        "max_positions":           6,
+        "max_positions":          10,
         "description":            "Growth focused · wide stops let volatility play out",
         "ideal_for":              "Mid-cap alts · momentum plays",
         "color":                  "orange",
