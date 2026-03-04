@@ -9,6 +9,7 @@ import re
 import logging
 import anthropic
 from config import ANTHROPIC_API_KEY
+from cost_tracker import cost_tracker
 
 log = logging.getLogger(__name__)
 
@@ -75,6 +76,12 @@ def analyze_sentiment(coin_symbol: str, news_text: str) -> dict:
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
         )
+        
+        # Track cost for this API call
+        input_tokens = message.usage.input_tokens if hasattr(message, 'usage') else len(prompt.split()) * 1.3  # rough estimate
+        output_tokens = message.usage.output_tokens if hasattr(message, 'usage') else len(message.content[0].text.split()) * 1.3
+        cost_tracker.track_claude_usage(int(input_tokens), int(output_tokens))
+        
         raw = message.content[0].text.strip()
         log.debug(f"Claude raw response for {coin_symbol}:\n{raw}")
         return _parse_response(raw)

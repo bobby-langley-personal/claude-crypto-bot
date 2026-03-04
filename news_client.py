@@ -19,6 +19,8 @@ import re
 
 import requests
 
+from cost_tracker import cost_tracker
+
 log = logging.getLogger(__name__)
 
 
@@ -91,6 +93,10 @@ def _get_fear_greed() -> dict | None:
                 timeout=6,
             )
             r.raise_for_status()
+            
+            # Track API call (Fear & Greed is free but good to track usage)
+            cost_tracker.track_api_call("fear_greed")
+            
             data = r.json()["data"][0]
             _fg_cache = (time.time(), data)
             return data
@@ -112,6 +118,10 @@ def _fetch_feed(name: str, url: str) -> list[dict]:
     try:
         r = requests.get(url, headers={"User-Agent": _UA}, timeout=10)
         r.raise_for_status()
+        
+        # Track RSS feed fetch (free but good to track usage)
+        cost_tracker.track_api_call("news_rss")
+        
         root = ET.fromstring(r.text)
         articles = []
         for item in root.findall(".//item"):

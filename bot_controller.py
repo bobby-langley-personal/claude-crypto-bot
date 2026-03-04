@@ -24,6 +24,7 @@ from pathlib import Path
 
 import requests
 
+from cost_tracker import cost_tracker
 from config import (
     AUTO_DISCOVER_COINS, CDP_KEY_FILE, CHECK_INTERVAL_MINUTES, COINS,
     EMERGENCY_DROP_PCT, LEARNING_EVERY_N_CYCLES, MAX_WATCHLIST_COINS,
@@ -301,6 +302,10 @@ class BotController:
                 timeout=10,
             )
             resp.raise_for_status()
+            
+            # Track CoinGecko API call
+            cost_tracker.track_api_call("coingecko")
+            
             coins = []
             for item in resp.json().get("coins", []):
                 i = item.get("item", {})
@@ -484,6 +489,9 @@ class BotController:
                 timeout=10,
             )
             resp.raise_for_status()
+            
+            # Track CoinGecko API call
+            cost_tracker.track_api_call("coingecko")
 
             for item in resp.json().get("coins", []):
                 if len(added) >= slots:
@@ -550,6 +558,8 @@ class BotController:
                 timeout=5, headers={"Accept": "application/json"},
             )
             if r.status_code == 200:
+                # Track CoinGecko API call
+                cost_tracker.track_api_call("coingecko")
                 status["coingecko"] = True
             else:
                 status["coingecko"] = False

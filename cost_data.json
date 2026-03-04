@@ -1,0 +1,32 @@
+{
+  "total_cost": 0.028500000000000004,
+  "daily_costs": [
+    {
+      "date": "2026-03-04",
+      "total": 0.028500000000000004,
+      "services": {
+        "claude_api": 0.028500000000000004
+      }
+    }
+  ],
+  "service_totals": {
+    "claude_api": {
+      "total": 0.028500000000000004,
+      "calls": 2,
+      "metadata": [
+        {
+          "input_tokens": 1000,
+          "output_tokens": 500,
+          "timestamp": "2026-03-04T17:24:28.544098"
+        },
+        {
+          "input_tokens": 2000,
+          "output_tokens": 800,
+          "timestamp": "2026-03-04T17:24:43.526741"
+        }
+      ]
+    }
+  },
+  "last_reset": "2026-03-04T17:24:28.544076",
+  "session_start": "2026-03-04T17:24:28.544086"
+}

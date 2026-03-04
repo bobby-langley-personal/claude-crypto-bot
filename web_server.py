@@ -19,6 +19,7 @@ Endpoints:
     POST /bot/emergency_clear  – Clear emergency mode so bot can restart
     GET  /bot/api_status       – Check connectivity to all external APIs
     GET  /bot/highlights       – Trade highlights (big winners and losers)
+    GET  /bot/costs           – Current cost breakdown and estimates
     WS   /ws                   – WebSocket: pushes state to all connected browsers every 2s
 
 Run locally:
@@ -39,6 +40,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from bot_controller import BotController
+from cost_tracker import cost_tracker
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -110,6 +112,8 @@ async def _broadcast_loop() -> None:
     while True:
         try:
             state = bot.get_state()
+            # Add cost data to state
+            state["costs"] = cost_tracker.get_cost_breakdown()
             await manager.broadcast(state)
         except Exception as e:
             log.error(f"Broadcast error: {e}")
@@ -244,6 +248,11 @@ async def highlights():
     return JSONResponse(bot.get_highlights())
 
 
+@app.get("/bot/costs")
+async def costs():
+    return JSONResponse(cost_tracker.get_cost_breakdown())
+
+
 @app.get("/coins/search")
 async def search_coins(q: str = ""):
     if not q or len(q) < 2:
@@ -257,6 +266,9 @@ async def search_coins(q: str = ""):
             timeout=5,
         )
         r.raise_for_status()
+        
+        # Track CoinGecko API call
+        cost_tracker.track_api_call("coingecko")
         results = []
         for item in r.json().get("coins", [])[:6]:
             sym = item.get("symbol", "").upper()
