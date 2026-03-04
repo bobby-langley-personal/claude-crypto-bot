@@ -65,6 +65,10 @@ class BotController:
         self.portfolio = None   # PaperPortfolio | LivePortfolio
         self.engine:    TradingEngine   | None = None
         self.learner:   StrategyLearner        = StrategyLearner()
+        
+        # Sync strategy mode from learner to engine on initialization
+        if hasattr(self.learner, '_current_strategy_mode'):
+            self._current_strategy_mode = self.learner._current_strategy_mode
 
         # ── Shadow portfolios (paper mode only) ───────────────────────────────
         # One per non-active risk profile; share coin data, skip API calls
@@ -127,6 +131,10 @@ class BotController:
                     params=self._risk_params,
                     coins=self._coins,
                 )
+                
+                # Set initial strategy mode from learner
+                if hasattr(self.learner, '_current_strategy_mode'):
+                    self.engine.set_strategy_mode(self.learner._current_strategy_mode)
 
                 # Initialise shadow portfolios (paper mode only, once per lifetime)
                 if self._paper_trading and not self._shadow_portfolios:
@@ -742,6 +750,20 @@ class BotController:
 
                 self._cycle_count += 1
 
+                # Check hourly active learning (aggressive paper trading)
+                if self._paper_trading and not self._learning_running:
+                    hourly_result = self.learner.check_hourly_learning(
+                        trades=self.portfolio.trade_history,
+                        current_params=self._risk_params,
+                        risk_level=self._risk_level,
+                        coins_watching=list(self._coins.keys())
+                    )
+                    if hourly_result:
+                        log.info(f"[Learner] Hourly strategy change: {hourly_result['new_strategy']}")
+                        # Apply the new strategy mode to the trading engine
+                        if self.engine:
+                            self.engine.set_strategy_mode(hourly_result['new_strategy'])
+
                 # Trigger AI learning every N cycles (non-blocking)
                 if (
                     self._cycle_count % LEARNING_EVERY_N_CYCLES == 0
@@ -750,7 +772,7 @@ class BotController:
                     log.info(
                         f"[Learner] Triggering learning after cycle {self._cycle_count}"
                     )
-                    self.trigger_learning(auto_apply=False)
+                    self.trigger_learning(auto_apply=self._paper_trading)  # Auto-apply in paper mode
 
             except Exception as e:
                 log.exception("Trading cycle error")
@@ -935,6 +957,11 @@ class BotController:
                 "suggestions": insight.get("suggestions", []),
                 "auto_applied": insight.get("auto_applied", []),
                 "patterns":    insight.get("patterns", []),
+                "strategy_mode": getattr(self.learner, '_current_strategy_mode', 'balanced'),
+                "performance_change": insight.get("performance_change", {"change": 0, "direction": "neutral"}),
+                "timeline": self.learner.get_performance_timeline(),
+                "insights_count": len(self.learner.get_insights()),
+                "all_insights": self.learner.get_insights()[:10],  # Last 10 for UI
             },
             "shadows": self.get_shadow_comparison(prices),
         }

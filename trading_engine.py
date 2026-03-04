@@ -47,6 +47,7 @@ class TradingEngine:
         self.last_analysis:   dict = {}
         self.last_prices:     dict = {}
         self.last_validation: dict = {}
+        self.strategy_mode    = "balanced"  # Current learning strategy mode
         self._apply_params(params)
 
     # ── Runtime updates ───────────────────────────────────────────────────────
@@ -66,6 +67,44 @@ class TradingEngine:
             f"TP=+{self.take_profit_pct}%  SL={self.stop_loss_pct}%  "
             f"size=${self.trade_amount_usd}  max={self.max_positions}"
         )
+    
+    def set_strategy_mode(self, mode: str) -> None:
+        """Set the learning strategy mode for experimental trading."""
+        self.strategy_mode = mode
+        log.info(f"[Engine] Strategy mode set to: {mode}")
+    
+    def _get_effective_threshold(self, score: float, symbol: str) -> float:
+        """Calculate effective threshold based on current strategy mode."""
+        base_threshold = self.threshold
+        
+        if not hasattr(self.portfolio, 'paper_trading') or not self.portfolio.paper_trading:
+            # In live mode, always use base threshold
+            return base_threshold
+        
+        # Aggressive paper trading adjustments based on strategy mode
+        if self.strategy_mode == "chaos_mode":
+            # Make risky trades to learn failure modes - much lower threshold
+            return max(4.0, base_threshold - 2.0)
+        elif self.strategy_mode == "micro_gains":
+            # Focus on small consistent wins - higher threshold
+            return min(8.5, base_threshold + 1.0)
+        elif self.strategy_mode == "momentum_chase":
+            # Chase trends aggressively - lower threshold for trending coins
+            tech = self.last_analysis.get(symbol, {}).get("technical", {})
+            if tech.get("macd", {}).get("bullish"):
+                return max(5.0, base_threshold - 1.5)
+            return base_threshold
+        elif self.strategy_mode == "contrarian":
+            # Go against sentiment - inverted scoring
+            return max(4.0, 10.0 - score + 1.0)
+        elif self.strategy_mode == "technical_pure":
+            # Rely purely on technical indicators - ignore sentiment somewhat
+            tech = self.last_analysis.get(symbol, {}).get("technical", {})
+            if tech.get("buy_points", 0) >= 2:  # Strong technical signal
+                return max(5.0, base_threshold - 1.0)
+            return min(9.0, base_threshold + 1.0)
+        
+        return base_threshold
 
     def update_coins(self, coins: dict) -> None:
         """Hot-reload the watchlist without restarting the bot."""
@@ -281,7 +320,10 @@ class TradingEngine:
                 log.warning(f"  {symbol}: no price available, skipping")
                 continue
 
-            if score >= self.threshold:
+            # Apply strategy mode adjustments for paper trading experimentation
+            effective_threshold = self._get_effective_threshold(score, symbol)
+            
+            if score >= effective_threshold:
                 if val["confidence"] == "low":
                     log.warning(
                         f"  {symbol}: score {score:.1f} meets threshold but "
