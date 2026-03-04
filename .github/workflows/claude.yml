@@ -57,3 +57,18 @@ jobs:
             DEPLOYMENT:
             - After PR is merged, server pulls via: /root/deploy.sh
             - Dashboard accessible at http://167.71.253.88:8001
+
+      - name: Auto-create PR if branch was pushed
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH=$(git branch -r | grep 'claude/' | tail -1 | xargs)
+          BRANCH=${BRANCH#origin/}
+          if [ -n "$BRANCH" ]; then
+            gh pr create \
+              --title "Claude: $(gh issue view ${{ github.event.issue.number }} --json title -q .title)" \
+              --body "Closes #${{ github.event.issue.number }}" \
+              --base main \
+              --head "$BRANCH" || true
+          fi
