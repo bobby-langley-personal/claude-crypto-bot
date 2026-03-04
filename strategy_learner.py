@@ -42,6 +42,15 @@ _BOUNDS = {
 # Maximum parameter drift allowed in a single auto-apply (relative)
 _MAX_DRIFT = 0.20   # 20% change per learning cycle
 
+# Aggressive learning modes for paper trading
+_PAPER_LEARNING_STRATEGIES = [
+    "chaos_mode",      # Make risky trades to learn failure modes
+    "micro_gains",     # Focus on small consistent wins
+    "momentum_chase",  # Chase trends aggressively
+    "contrarian",      # Go against market sentiment
+    "technical_pure",  # Rely purely on technical indicators
+]
+
 
 class StrategyLearner:
     """Analyses trade history with Claude and suggests strategy improvements."""
@@ -49,6 +58,10 @@ class StrategyLearner:
     def __init__(self):
         self._history: list[dict] = []
         self._load_history()
+        self._last_hourly_check = datetime.now(timezone.utc)
+        self._current_strategy_mode = "balanced"
+        self._strategy_start_time = datetime.now(timezone.utc)
+        self._performance_timeline: list[dict] = []
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -110,6 +123,14 @@ class StrategyLearner:
             "coin_notes":  parsed.get("coin_notes", {}),
             "auto_applied": applied,
             "new_params":  new_params if applied else None,
+            "strategy_mode": self._current_strategy_mode,
+            "performance_change": self._calculate_performance_change(stats),
+            "timeline_entry": {
+                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "win_rate": stats.get("win_rate_pct", 0),
+                "avg_pnl": stats.get("total_pnl_usd", 0) / max(len(sells), 1),
+                "strategy_mode": self._current_strategy_mode
+            },
         }
 
         self._history.append(insight)
@@ -117,10 +138,15 @@ class StrategyLearner:
         if len(self._history) > 20:
             self._history = self._history[-20:]
 
+        # Update performance timeline
+        self._performance_timeline.append(insight["timeline_entry"])
+        if len(self._performance_timeline) > 50:  # Keep last 50 entries
+            self._performance_timeline = self._performance_timeline[-50:]
+        
         self._save_history()
         log.info(
             f"[Learner] Cycle complete — {len(parsed.get('suggestions', []))} suggestion(s), "
-            f"{len(applied)} auto-applied"
+            f"{len(applied)} auto-applied, mode: {self._current_strategy_mode}"
         )
         return insight
 
@@ -130,6 +156,86 @@ class StrategyLearner:
 
     def get_latest(self) -> dict | None:
         return self._history[-1] if self._history else None
+    
+    def get_performance_timeline(self) -> list[dict]:
+        """Return performance timeline for sparkline visualization."""
+        return self._performance_timeline
+    
+    def check_hourly_learning(self, trades: list[dict], current_params: dict, 
+                             risk_level: str, coins_watching: list[str]) -> dict | None:
+        """Check if hourly active learning should trigger strategy changes."""
+        now = datetime.now(timezone.utc)
+        hours_since_check = (now - self._last_hourly_check).total_seconds() / 3600
+        
+        if hours_since_check < 1.0:
+            return None
+            
+        self._last_hourly_check = now
+        
+        # Check if current strategy is underperforming
+        if self._should_change_strategy(trades):
+            new_mode = self._select_new_strategy_mode()
+            if new_mode != self._current_strategy_mode:
+                log.info(f"[Learner] Switching from {self._current_strategy_mode} to {new_mode} mode")
+                self._current_strategy_mode = new_mode
+                self._strategy_start_time = now
+                
+                return {
+                    "hourly_change": True,
+                    "new_strategy": new_mode,
+                    "reason": "Hourly strategy optimization triggered",
+                    "timestamp": now.strftime("%Y-%m-%dT%H:%M:%SZ")
+                }
+        
+        return None
+    
+    def _should_change_strategy(self, trades: list[dict]) -> bool:
+        """Determine if strategy should be changed based on recent performance."""
+        # Get trades from the last hour
+        one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+        recent_sells = [t for t in trades 
+                       if t.get("action") == "SELL" 
+                       and "timestamp" in t
+                       and datetime.fromisoformat(t["timestamp"].replace("Z", "+00:00")) > one_hour_ago]
+        
+        if len(recent_sells) < 2:
+            # Not enough recent activity, check if we've been in same strategy too long
+            hours_in_strategy = (datetime.now(timezone.utc) - self._strategy_start_time).total_seconds() / 3600
+            return hours_in_strategy > 4  # Change every 4 hours minimum
+        
+        # Check recent win rate
+        wins = [t for t in recent_sells if t.get("pnl_usd", 0) > 0]
+        win_rate = len(wins) / len(recent_sells) * 100 if recent_sells else 0
+        
+        # Aggressive paper trading: change strategy if not learning enough
+        return win_rate < 40 or win_rate > 80  # Change if too good or too bad
+    
+    def _select_new_strategy_mode(self) -> str:
+        """Select a new strategy mode for experimentation."""
+        import random
+        
+        # In paper trading, be aggressive and try different approaches
+        available_modes = [mode for mode in _PAPER_LEARNING_STRATEGIES 
+                          if mode != self._current_strategy_mode]
+        
+        if not available_modes:
+            return "balanced"
+            
+        return random.choice(available_modes)
+    
+    def _calculate_performance_change(self, current_stats: dict) -> dict:
+        """Calculate performance change from last learning cycle."""
+        if not self._history:
+            return {"change": 0, "direction": "neutral"}
+            
+        last_stats = self._history[-1].get("stats", {})
+        current_wr = current_stats.get("win_rate_pct", 0)
+        last_wr = last_stats.get("win_rate_pct", 0)
+        
+        change = current_wr - last_wr
+        direction = "up" if change > 2 else "down" if change < -2 else "neutral"
+        
+        return {"change": round(change, 1), "direction": direction}
 
     # ── Stats ─────────────────────────────────────────────────────────────────
 

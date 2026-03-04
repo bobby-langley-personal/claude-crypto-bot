@@ -666,7 +666,7 @@
           <button @click="triggerLearning(false)"
                   class="px-3 py-1 bg-purple-800/40 hover:bg-purple-700/50 border border-purple-700/40
                          text-purple-400 rounded text-xs transition-all">
-            📊 Analyze
+            📊 Analyze Now
           </button>
           <button @click="triggerLearning(true)"
                   class="px-3 py-1 bg-purple-600 hover:bg-purple-500
@@ -675,38 +675,179 @@
           </button>
         </div>
       </div>
-      <div class="grid grid-cols-3 gap-4 mb-3 text-center">
+      
+      <!-- Strategy Mode & Performance -->
+      <div class="grid grid-cols-4 gap-3 mb-3 text-center">
         <div>
-          <div class="text-slate-500 text-xs">Learning Cycles</div>
-          <div class="text-lg font-bold" x-text="s.learning?.cycle_count || 0"></div>
+          <div class="text-slate-500 text-xs">Strategy Mode</div>
+          <div class="text-sm font-bold text-purple-400 capitalize" x-text="s.learning?.strategy_mode || 'balanced'"></div>
+        </div>
+        <div>
+          <div class="text-slate-500 text-xs">Insights</div>
+          <div class="text-lg font-bold text-cyan-400" x-text="s.learning?.insights_count || 0"></div>
         </div>
         <div>
           <div class="text-slate-500 text-xs">Win Rate</div>
-          <div class="text-lg font-bold" :class="pnlCls(parseFloat(s.learning?.win_rate) - 50)"
-               x-text="s.learning?.win_rate ? s.learning.win_rate.toFixed(1) + '%' : '—'"></div>
+          <div class="text-lg font-bold flex items-center justify-center gap-1" 
+               :class="pnlCls(parseFloat(s.learning?.win_rate) - 50)">
+            <span x-text="s.learning?.win_rate ? s.learning.win_rate.toFixed(1) + '%' : '—'"></span>
+            <template x-if="s.learning?.performance_change?.direction">
+              <span class="text-xs"
+                    :class="{
+                      'text-green-400': s.learning.performance_change.direction === 'up',
+                      'text-red-400': s.learning.performance_change.direction === 'down',
+                      'text-slate-400': s.learning.performance_change.direction === 'neutral'
+                    }"
+                    x-text="s.learning.performance_change.direction === 'up' ? '▲' : 
+                           s.learning.performance_change.direction === 'down' ? '▼' : '―'"></span>
+            </template>
+          </div>
         </div>
         <div>
           <div class="text-slate-500 text-xs">Next Review</div>
           <div class="text-sm text-slate-300" x-text="s.learning?.next_in || '?'"></div>
         </div>
       </div>
-      <template x-if="s.learning?.analysis || s.learning?.key_insight">
-        <div class="bg-purple-950/50 border-l-4 border-purple-500 p-3 mb-3">
-          <div x-show="s.learning.key_insight" class="text-sm font-bold text-purple-300 mb-1"
-               x-text="s.learning.key_insight"></div>
-          <div x-show="s.learning.analysis" class="text-xs text-slate-400"
-               x-text="s.learning.analysis"></div>
+
+      <!-- Performance Timeline (Sparkline) -->
+      <template x-if="s.learning?.timeline?.length">
+        <div class="mb-3">
+          <div class="text-xs text-slate-500 uppercase tracking-wider mb-2">Performance Timeline</div>
+          <div class="bg-navy-950 border border-slate-800/40 rounded-lg p-2">
+            <div class="flex items-center gap-1 h-8">
+              <template x-for="(point, index) in s.learning.timeline.slice(-20)" :key="index">
+                <div class="flex-1 flex items-end">
+                  <div class="w-full transition-all duration-300"
+                       :style="'height: ' + Math.max(4, (point.win_rate / 100) * 30) + 'px'"
+                       :class="{
+                         'bg-green-500': point.win_rate >= 60,
+                         'bg-yellow-500': point.win_rate >= 40 && point.win_rate < 60,
+                         'bg-red-500': point.win_rate < 40
+                       }"
+                       :title="'Win Rate: ' + point.win_rate.toFixed(1) + '% (' + point.timestamp.slice(11, 16) + ')'">
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
         </div>
       </template>
-      <template x-if="s.learning?.suggestions?.length">
+
+      <!-- Learning Insights - Expandable Rows -->
+      <template x-if="s.learning?.all_insights?.length">
         <div class="space-y-2">
-          <div class="text-xs text-slate-500 uppercase tracking-wider">Suggestions</div>
-          <template x-for="suggestion in s.learning.suggestions" :key="Math.random()">
-            <div class="flex items-start gap-2 text-xs">
-              <span class="text-purple-400 font-bold flex-shrink-0">→</span>
-              <span class="text-slate-300" x-text="typeof suggestion === 'string' ? suggestion : JSON.stringify(suggestion)"></span>
+          <div class="flex items-center justify-between">
+            <div class="text-xs text-slate-500 uppercase tracking-wider">Recent Learning Insights</div>
+            <div class="text-xs text-slate-600">Click to expand details</div>
+          </div>
+          <template x-for="(insight, index) in s.learning.all_insights" :key="insight.timestamp">
+            <div class="border border-slate-800/40 rounded-lg overflow-hidden">
+              <div class="p-3 cursor-pointer transition-colors hover:bg-slate-800/20"
+                   @click="insight.expanded = !insight.expanded">
+                <div class="flex items-center justify-between mb-1">
+                  <div class="flex items-center gap-3">
+                    <span class="text-xs text-slate-500" x-text="fmtTs(insight.timestamp)"></span>
+                    <span class="text-xs px-2 py-0.5 bg-purple-800/40 text-purple-300 rounded" 
+                          x-text="insight.strategy_mode || 'balanced'"></span>
+                    <span class="text-xs" :class="pnlCls(insight.stats?.win_rate_pct - 50)"
+                          x-text="insight.stats?.win_rate_pct ? insight.stats.win_rate_pct.toFixed(1) + '% WR' : ''"></span>
+                  </div>
+                  <span class="text-slate-400" x-text="insight.expanded ? '▼' : '▶'"></span>
+                </div>
+                <div class="text-sm font-bold text-purple-300" x-text="insight.key_insight || 'Learning in progress...'"></div>
+              </div>
+              
+              <template x-if="insight.expanded">
+                <div class="border-t border-slate-800/40 p-3 bg-navy-950/50 space-y-3">
+                  <!-- Analysis -->
+                  <template x-if="insight.analysis">
+                    <div>
+                      <div class="text-xs text-slate-500 uppercase tracking-wider mb-1">Analysis</div>
+                      <div class="text-xs text-slate-300" x-text="insight.analysis"></div>
+                    </div>
+                  </template>
+                  
+                  <!-- Patterns Discovered -->
+                  <template x-if="insight.patterns?.length">
+                    <div>
+                      <div class="text-xs text-slate-500 uppercase tracking-wider mb-1">Patterns Discovered</div>
+                      <div class="space-y-1">
+                        <template x-for="pattern in insight.patterns">
+                          <div class="text-xs text-amber-300 flex items-start gap-2">
+                            <span class="text-amber-500">•</span>
+                            <span x-text="pattern"></span>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+                  </template>
+                  
+                  <!-- Strategy Changes Applied -->
+                  <template x-if="insight.auto_applied?.length">
+                    <div>
+                      <div class="text-xs text-slate-500 uppercase tracking-wider mb-1">Strategy Changes Applied</div>
+                      <div class="space-y-1">
+                        <template x-for="change in insight.auto_applied">
+                          <div class="text-xs text-green-300 flex items-center gap-2">
+                            <span class="text-green-500">✓</span>
+                            <span x-text="change.parameter + ': ' + change.from + ' → ' + change.to"></span>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+                  </template>
+                  
+                  <!-- Suggestions -->
+                  <template x-if="insight.suggestions?.length">
+                    <div>
+                      <div class="text-xs text-slate-500 uppercase tracking-wider mb-1">Suggestions</div>
+                      <div class="space-y-1">
+                        <template x-for="suggestion in insight.suggestions">
+                          <div class="text-xs text-cyan-300 flex items-start gap-2">
+                            <span class="text-cyan-500">→</span>
+                            <span x-text="suggestion.reasoning || JSON.stringify(suggestion)"></span>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+                  </template>
+                  
+                  <!-- Performance Stats -->
+                  <template x-if="insight.stats">
+                    <div>
+                      <div class="text-xs text-slate-500 uppercase tracking-wider mb-1">Performance Stats</div>
+                      <div class="grid grid-cols-4 gap-3 text-xs">
+                        <div>
+                          <span class="text-slate-500">Trades:</span> 
+                          <span class="text-white" x-text="insight.stats.total_trades"></span>
+                        </div>
+                        <div>
+                          <span class="text-slate-500">Wins:</span> 
+                          <span class="text-green-400" x-text="insight.stats.wins"></span>
+                        </div>
+                        <div>
+                          <span class="text-slate-500">P&L:</span> 
+                          <span :class="pnlCls(insight.stats.total_pnl_usd)" x-text="fmtUSD(insight.stats.total_pnl_usd)"></span>
+                        </div>
+                        <div x-show="insight.stats.avg_score_on_wins">
+                          <span class="text-slate-500">Avg Score:</span>
+                          <span class="text-purple-400" x-text="insight.stats.avg_score_on_wins?.toFixed(1)"></span>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </template>
             </div>
           </template>
+        </div>
+      </template>
+
+      <!-- Current Strategy Info -->
+      <template x-if="!s.learning?.all_insights?.length">
+        <div class="text-center py-6 text-slate-600">
+          <div class="text-sm mb-2">🧠 AI is learning from your trades</div>
+          <div class="text-xs">The AI self-review runs automatically every 5 cycles (approx. every 2.5 hours) and actively experiments with different strategies to maximize learning in paper trading mode.</div>
         </div>
       </template>
     </div>
