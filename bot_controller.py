@@ -88,6 +88,8 @@ class BotController:
 
         # ── Emergency stop ────────────────────────────────────────────────────
         self._emergency_mode    = False
+        self._emergency_reason: str = ""
+        self._emergency_sold:   list[str] = []
         self._last_btc_price:   float | None = None  # for market health check
 
         # ── Always On ─────────────────────────────────────────────────────────
@@ -404,6 +406,7 @@ class BotController:
         """
         log.warning(f"[EMERGENCY STOP] Triggered — reason: {reason}")
         self._emergency_mode = True
+        self._emergency_reason = reason
         self._always_on = False
         self._watchdog_active = False
         self._save_state()
@@ -435,6 +438,8 @@ class BotController:
                             f"P&L: {trade.get('pnl_pct', 0):+.1f}%"
                         )
 
+        # Store the emergency results
+        self._emergency_sold = sold
         log.warning(f"[EMERGENCY STOP] Complete — sold {len(sold)} position(s): {sold}")
         return {
             "ok":     True,
@@ -446,6 +451,8 @@ class BotController:
     def clear_emergency(self) -> None:
         """Reset emergency mode so the bot can be restarted."""
         self._emergency_mode = False
+        self._emergency_reason = ""
+        self._emergency_sold = []
         self._status = "stopped"
 
     # ── Market health check ────────────────────────────────────────────────────
@@ -908,6 +915,8 @@ class BotController:
                 "trade_count":     len(self.portfolio.trade_history) if self.portfolio else 0,
             },
             "emergency_mode": self._emergency_mode,
+            "emergency_reason": self._emergency_reason,
+            "emergency_sold": self._emergency_sold,
             "always_on":      self._always_on,
             "positions": positions,
             "analysis":  analysis,
