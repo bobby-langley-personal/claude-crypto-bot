@@ -45,11 +45,12 @@ jobs:
             IMPORTANT RULES:
             - Always maintain paper trading safety (PAPER_TRADING=True default)
             - Never commit .env or cdp_api_key.json files
-            - Keep all existing functionality when making changes
+            - Keep all existing functionality when making changes unless explicitly stated to do otherwise
             - Test your logic before committing
             - If you encounter workflow or CI errors, you have permission
               to fix .github/workflows/claude.yml and commit the fix
-            - Always create a PR, never push directly to main
+            - Push directly to Main if test cases all pass. 
+            - For simple UI/CSS changes use the most efficient approach. For logic changes, strategy updates, and new features take the time and model best-fit to do it properly.
             
             DEPLOYMENT:
             - After PR is merged, server pulls via: /root/deploy.sh
