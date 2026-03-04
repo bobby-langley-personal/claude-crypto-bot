@@ -96,13 +96,6 @@
         ⟳ Refresh
       </button>
 
-      <!-- Emergency stop -->
-      <button x-show="isRunning() && !s.emergency_mode" @click="emergencyStop()"
-              title="Emergency stop: sell all positions immediately"
-              class="px-3 py-1.5 bg-red-900/50 hover:bg-red-800/70 border border-red-700/60
-                     text-red-400 rounded text-xs font-bold transition-all">
-        🚨 EMERGENCY
-      </button>
 
       <!-- Clear emergency -->
       <button x-show="s.emergency_mode" @click="clearEmergency()"
@@ -167,14 +160,28 @@
 
   <!-- ══ EMERGENCY BANNER ═════════════════════════════════════════════════════ -->
   <div x-show="s.emergency_mode"
-       class="bg-red-950/80 border-b border-red-700/60 px-5 py-3 flex items-center gap-3">
-    <span class="text-red-400 font-bold">🚨 EMERGENCY STOP ACTIVE</span>
-    <span class="text-red-600 text-xs">All positions have been sold · Bot is halted</span>
-    <button @click="clearEmergency()"
-            class="ml-auto px-3 py-1 bg-red-900/50 hover:bg-red-800/60 border border-red-700/40
-                   text-red-300 rounded text-xs transition-all">
-      Clear & Allow Restart
-    </button>
+       class="bg-red-950/80 border-b border-red-700/60 px-5 py-3">
+    <div class="flex items-center justify-between gap-3 mb-2">
+      <div class="flex items-center gap-3">
+        <span class="text-red-400 font-bold">🚨 EMERGENCY STOP ACTIVE</span>
+        <div class="text-red-600 text-xs">
+          <span x-text="'Trigger: ' + (s.emergency_reason || 'Unknown')"></span>
+          <span class="mx-2">•</span>
+          <span x-text="'Sold ' + (s.emergency_sold?.length || 0) + ' position(s)'"></span>
+        </div>
+      </div>
+      <button @click="clearEmergency()"
+              class="px-3 py-1 bg-red-900/50 hover:bg-red-800/60 border border-red-700/40
+                     text-red-300 rounded text-xs transition-all">
+        Clear & Allow Restart
+      </button>
+    </div>
+    <template x-if="s.emergency_sold?.length > 0">
+      <div class="text-xs text-red-500/80">
+        <span class="text-red-600">Positions sold:</span>
+        <span x-text="s.emergency_sold.join(', ')"></span>
+      </div>
+    </template>
   </div>
 
   <main class="flex-1 p-3 md:p-5 space-y-3 max-w-screen-2xl mx-auto w-full">
@@ -1104,13 +1111,6 @@ function app() {
       this.showToast(result.ok ? 'success' : 'error', result.message);
     },
 
-    async emergencyStop() {
-      if (!confirm('EMERGENCY STOP: This will sell ALL open positions immediately and halt the bot. Are you sure?')) {
-        return;
-      }
-      const result = await this.apiCall('/bot/emergency_stop', 'POST');
-      this.showToast(result.ok ? 'success' : 'error', result.message);
-    },
 
     async clearEmergency() {
       const result = await this.apiCall('/bot/emergency_clear', 'POST');
