@@ -209,11 +209,214 @@
     /* Responsive */
     @media (max-width: 900px) {
       .main { grid-template-columns: 1fr; }
-      .risk-grid { grid-template-columns: repeat(2, 1fr); }
+      .right { order: -1; } /* Move right column (controls) above left on mobile */
     }
-    @media (max-width: 600px) {
-      .stats-row { grid-template-columns: repeat(2, 1fr); }
-      .topbar { gap: 10px; }
+    
+    /* Mobile optimizations for 430px iPhone screens */
+    @media (max-width: 480px) {
+      /* Adjust base font size for mobile readability */
+      body { font-size: 16px; }
+      
+      /* Top bar mobile layout */
+      .topbar { 
+        padding: 12px 16px; 
+        gap: 8px;
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .topbar-title { 
+        font-size: 20px; 
+        text-align: center;
+        margin-bottom: 8px;
+      }
+      .api-bar { 
+        justify-content: center;
+        gap: 6px;
+      }
+      .api-dot {
+        font-size: 11px;
+        padding: 2px 6px;
+      }
+      
+      /* Main content padding */
+      .main { 
+        padding: 12px 16px;
+        gap: 12px;
+      }
+      
+      /* Card improvements */
+      .card { 
+        padding: 12px;
+        border-radius: 8px;
+      }
+      .card-title { 
+        font-size: 13px;
+        margin-bottom: 10px;
+      }
+      
+      /* Portfolio stats - 2x2 grid */
+      .stats-row { 
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+      }
+      .stat-box {
+        padding: 10px 12px;
+      }
+      .stat-label {
+        font-size: 12px;
+      }
+      .stat-value {
+        font-size: 18px;
+      }
+      .stat-sub {
+        font-size: 12px;
+      }
+      
+      /* Risk profile - 2x2 grid */
+      .risk-grid { 
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
+      }
+      .risk-btn {
+        padding: 8px 6px;
+      }
+      .risk-name {
+        font-size: 14px;
+      }
+      .risk-desc {
+        font-size: 11px;
+      }
+      
+      /* Buttons - full width and thumb-friendly */
+      .btn {
+        padding: 12px 16px;
+        font-size: 16px;
+        min-height: 44px; /* Apple's recommended touch target */
+        justify-content: center;
+      }
+      .btn-sm {
+        padding: 10px 14px;
+        font-size: 14px;
+        min-height: 40px;
+      }
+      .btn-xs {
+        padding: 8px 12px;
+        font-size: 12px;
+        min-height: 36px;
+      }
+      
+      /* Make key buttons full width */
+      .card .btn:not(.btn-xs):not(.btn-sm),
+      #btn-start,
+      #btn-stop,
+      #btn-cycle,
+      .btn-green,
+      .btn-red,
+      .btn-purple {
+        width: 100%;
+        margin-bottom: 8px;
+      }
+      
+      /* Control buttons layout */
+      .card .flex.gap-8.items-center.flex-wrap {
+        flex-direction: column;
+        gap: 8px;
+        align-items: stretch;
+      }
+      .card .flex.gap-8.items-center.flex-wrap > * {
+        width: 100%;
+        justify-content: center;
+      }
+      .card .flex.gap-8.items-center.flex-wrap .ml-auto {
+        margin-left: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      
+      /* Toggle wrapper */
+      .toggle-wrap {
+        justify-content: center;
+        gap: 12px;
+      }
+      
+      /* Search input */
+      .search-input {
+        font-size: 16px;
+        padding: 12px 16px;
+        min-height: 44px;
+      }
+      
+      /* Tables - better mobile layout */
+      table {
+        font-size: 12px;
+      }
+      th {
+        padding: 6px 8px;
+        font-size: 10px;
+      }
+      td {
+        padding: 8px 6px;
+      }
+      
+      /* Coin rows - stack info vertically on very small screens */
+      .coin-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 4px;
+        padding: 8px 0;
+      }
+      .coin-row .coin-sym {
+        font-size: 16px;
+        min-width: auto;
+      }
+      .coin-row .coin-price {
+        font-size: 14px;
+      }
+      .coin-row .coin-signal {
+        align-self: flex-end;
+      }
+      
+      /* Filter tabs */
+      .filter-tabs {
+        gap: 4px;
+      }
+      .filter-tab {
+        flex: 1;
+        text-align: center;
+        padding: 8px 4px;
+        font-size: 11px;
+      }
+      
+      /* Log container */
+      #log-container {
+        font-size: 10px;
+        height: 180px;
+      }
+      
+      /* Toast positioning */
+      #toast {
+        bottom: 16px;
+        right: 16px;
+        left: 16px;
+      }
+      .toast-item {
+        max-width: none;
+        font-size: 14px;
+      }
+      
+      /* Emergency banner */
+      .emergency-banner {
+        flex-direction: column;
+        text-align: center;
+        gap: 8px;
+      }
+      
+      /* Paper banner */
+      .paper-banner {
+        text-align: center;
+        font-size: 13px;
+      }
     }
   </style>
 </head>
