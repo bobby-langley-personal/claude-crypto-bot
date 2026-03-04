@@ -253,18 +253,47 @@ async def costs():
     return JSONResponse(cost_tracker.get_cost_breakdown())
 
 
-@app.get("/bot/costs/claude")
-async def claude_costs():
-    """Get detailed Claude model cost breakdown."""
-    return JSONResponse(cost_tracker.get_claude_model_breakdown())
+@app.get("/bot/pnl/{period}")
+async def get_pnl_breakdown(period: str):
+    """Get P&L breakdown for specified time period (1h, 24h, 7d)."""
+    if period not in ["1h", "24h", "7d"]:
+        return JSONResponse({"error": "Invalid period. Use 1h, 24h, or 7d"}, status_code=400)
+    
+    try:
+        portfolio = bot._engine._portfolio if bot._engine else None
+        if not portfolio or not hasattr(portfolio, 'get_pnl_breakdown'):
+            return JSONResponse({"error": "Portfolio not available"}, status_code=500)
+            
+        breakdown = portfolio.get_pnl_breakdown(period)
+        return JSONResponse(breakdown)
+    except Exception as e:
+        log.error(f"Error getting P&L breakdown for {period}: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@app.get("/bot/costs/{timeframe}")
-async def costs_by_timeframe(timeframe: str):
-    """Get cost breakdown by timeframe (inception, 24h, 7d)."""
-    if timeframe not in ["inception", "24h", "7d"]:
-        return JSONResponse({"error": "Invalid timeframe. Use: inception, 24h, 7d"}, status_code=400)
-    return JSONResponse(cost_tracker.get_cost_by_timeframe(timeframe))
+@app.post("/bot/sell_for_proof")
+async def sell_for_proof():
+    """Trigger a proof sell - sell one profitable position at earliest profit margin."""
+    try:
+        if not bot._engine:
+            return JSONResponse({"ok": False, "message": "Bot engine not available"})
+            
+        trade = bot._engine.sell_single_position_for_proof(target_profit_pct=5.0)
+        
+        if trade:
+            return JSONResponse({
+                "ok": True,
+                "message": f"Proof sell executed: {trade['symbol']} for {trade['pnl_usd']:+.2f} USD ({trade['pnl_pct']:+.1f}%)",
+                "trade": trade
+            })
+        else:
+            return JSONResponse({
+                "ok": False,
+                "message": "No positions currently profitable enough for proof sell (need >5% profit)"
+            })
+    except Exception as e:
+        log.error(f"Error executing proof sell: {e}")
+        return JSONResponse({"ok": False, "message": str(e)}, status_code=500)
 
 
 @app.get("/coins/search")
