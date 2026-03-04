@@ -1,5 +1,6 @@
 # Crypto Sentiment Bot
 
+
 > A paper-trading bot powered by Claude AI. Watches crypto prices, reads news, scores sentiment 1–10, and automatically simulates trades — all without touching real money.
 
 ---
