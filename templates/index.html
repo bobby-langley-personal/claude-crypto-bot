@@ -88,6 +88,18 @@
         <span x-text="formatCost(s.costs?.total || 0)" class="font-mono"></span>
       </div>
 
+      <!-- Version info -->
+      <div class="hidden lg:flex flex-col items-end text-xs text-slate-500">
+        <div class="flex items-center gap-1">
+          <span>Version</span>
+          <span x-text="s.version?.version ? 'v' + s.version.version : 'v1.0.0'" class="font-mono text-cyan-400"></span>
+          <span x-show="s.version?.commit_hash" x-text="'(' + s.version.commit_hash + ')'" class="font-mono text-slate-600"></span>
+        </div>
+        <div class="text-xs text-slate-600" 
+             x-text="s.version?.last_updated ? 'Updated ' + formatLastUpdate(s.version.last_updated) : 'Updated recently'"
+             title="Last deployment time"></div>
+      </div>
+
       <!-- Manual refresh (cycle now) -->
       <button x-show="isRunning()" @click="runCycleNow()"
               title="Trigger analysis cycle now"
@@ -1258,6 +1270,9 @@ function app() {
     pnlPeriod: '24h',
     currentPnlData: {},
     sentimentModalData: {},
+    costTimeframe: 'inception',
+    costsByTimeframe: {},
+    claudeCallHistory: [],
     
     // UI state
     showAddCoin: false,
@@ -1361,6 +1376,14 @@ function app() {
       this.showToast(result.ok ? 'success' : 'error', result.message);
     },
 
+    async emergencyStop() {
+      if (!confirm('Emergency stop will sell ALL positions immediately. Continue?')) {
+        return;
+      }
+      const result = await this.apiCall('/bot/emergency_stop', 'POST');
+      this.showToast(result.ok ? 'success' : 'error', result.message);
+    },
+
     // Risk management
     async setRisk(level) {
       const result = await this.apiCall('/bot/risk', 'POST', { level });
@@ -1445,41 +1468,39 @@ function app() {
       this.showToast(result.ok ? 'success' : 'error', result.message);
     },
 
-    // P&L Period Management
+    // P&L period management
     async setPnlPeriod(period) {
       this.pnlPeriod = period;
-      if (period !== 'all') {
-        try {
-          const response = await fetch(`/bot/pnl/${period}`);
-          const data = await response.json();
-          this.currentPnlData = {
-            ...data,
-            period_label: `${data.wins || 0}/${data.sell_trades || 0} trades • ${(data.win_rate || 0).toFixed(1)}% win rate`
-          };
-        } catch (e) {
-          console.error('P&L period error:', e);
-          this.currentPnlData = {
-            pnl_usd: 0,
-            period_label: 'Error loading data'
-          };
-        }
-      } else {
-        // Use overall portfolio data
+      if (period === 'all') {
         this.currentPnlData = {
           pnl_usd: this.s.portfolio?.pnl_usd || 0,
-          pnl_pct: this.s.portfolio?.pnl_pct || 0
+          pnl_pct: this.s.portfolio?.pnl_pct || 0,
+          period_label: this.fmtPct(this.s.portfolio?.pnl_pct) + ' on $' + this.fmtNum(this.s.portfolio?.starting_cash)
         };
+      } else {
+        try {
+          const response = await fetch(`/bot/pnl_breakdown/${period}`);
+          if (response.ok) {
+            this.currentPnlData = await response.json();
+            this.currentPnlData.pnl_usd = this.currentPnlData.total_pnl_usd || 0;
+            this.currentPnlData.pnl_pct = this.currentPnlData.win_rate || 0;
+          } else {
+            this.currentPnlData = { pnl_usd: 0, pnl_pct: 0 };
+          }
+        } catch (e) {
+          console.error('P&L breakdown error:', e);
+          this.currentPnlData = { pnl_usd: 0, pnl_pct: 0 };
+        }
       }
     },
 
-    // Sentiment Reasoning Modal
+    // Sentiment modal
     showSentimentReasoning(symbol, coin) {
-      const analysis = this.s.analysis?.[symbol] || {};
       this.sentimentModalData = {
-        symbol: symbol,
+        symbol,
         technical: coin.technical,
-        analysis: analysis,
-        signal: coin.technical?.signal || 'HOLD'
+        analysis: this.s.analysis?.[symbol],
+        signal: coin.technical?.signal
       };
       this.showSentimentModal = true;
     },
@@ -1741,14 +1762,41 @@ function app() {
       }
     },
 
+    formatLastUpdate(timestamp) {
+      if (!timestamp) return 'recently';
+      try {
+        const date = new Date(timestamp);
+        const now = new Date();
+        const diffMs = now - date;
+        const diffMins = Math.floor(diffMs / 60000);
+        const diffHours = Math.floor(diffMs / 3600000);
+        const diffDays = Math.floor(diffMs / 86400000);
+
+        if (diffMins < 60) {
+          return diffMins <= 1 ? 'just now' : `${diffMins}m ago`;
+        } else if (diffHours < 24) {
+          return `${diffHours}h ago`;
+        } else if (diffDays < 7) {
+          return `${diffDays}d ago`;
+        } else {
+          return date.toLocaleDateString('en-US', { 
+            month: 'short', 
+            day: 'numeric'
+          });
+        }
+      } catch (e) {
+        return 'recently';
+      }
+    },
+
     formatHoldTime(hours) {
-      if (!hours) return '—';
+      if (!hours) return 'unknown';
       if (hours < 1) {
         return `${Math.round(hours * 60)}min`;
       } else if (hours < 24) {
         return `${hours.toFixed(1)}hrs`;
       } else {
-        return `${(hours / 24).toFixed(1)} days`;
+        return `${(hours / 24).toFixed(1)}days`;
       }
     }
   }

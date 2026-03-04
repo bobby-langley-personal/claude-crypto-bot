@@ -431,16 +431,22 @@ class TradingEngine:
             pct = pnl["pnl_pct"]
 
             if pct >= self.take_profit_pct:
+                target_price = pnl["entry_price"] * (1 + self.take_profit_pct / 100)
                 trade = self.portfolio.sell(
                     symbol, price, reason="take_profit",
                     reason_detail=f"+{pct:.1f}% reached take-profit (+{self.take_profit_pct}%)",
+                    trigger_price=target_price,
+                    trigger_conditions={"profit_target_pct": self.take_profit_pct, "actual_pct": pct}
                 )
                 if trade:
                     summary["sells"].append(trade)
             elif pct <= self.stop_loss_pct:
+                stop_price = pnl["entry_price"] * (1 + self.stop_loss_pct / 100)
                 trade = self.portfolio.sell(
                     symbol, price, reason="stop_loss",
                     reason_detail=f"{pct:.1f}% triggered stop-loss ({self.stop_loss_pct}%)",
+                    trigger_price=stop_price,
+                    trigger_conditions={"stop_loss_pct": self.stop_loss_pct, "actual_pct": pct}
                 )
                 if trade:
                     summary["sells"].append(trade)
@@ -451,6 +457,7 @@ class TradingEngine:
                     trade = self.portfolio.sell(
                         symbol, price, reason="overbought",
                         reason_detail=f"RSI {rsi:.0f} exceeded overbought threshold",
+                        trigger_conditions={"rsi": rsi, "rsi_threshold": RSI_OVERBOUGHT_EXIT, "technical_signals": tech}
                     )
                     if trade:
                         summary["sells"].append(trade)
