@@ -3,17 +3,57 @@ name: Claude Code
 on:
   issues:
     types: [opened, labeled]
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
 
 jobs:
   claude:
-    if: contains(github.event.issue.labels.*.name, 'claude')
+    if: |
+      (github.event_name == 'issues' && contains(github.event.issue.labels.*.name, 'claude')) ||
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
       issues: write
       pull-requests: write
       id-token: write
+      actions: write
     steps:
-      - uses: anthropics/claude-code-action@beta
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Claude Code
+        uses: anthropics/claude-code-action@beta
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          system_prompt: |
+            You are an expert Python developer working on a crypto trading bot.
+            
+            REPOSITORY CONTEXT:
+            - This is a FastAPI crypto sentiment trading bot
+            - Runs on DigitalOcean at 167.71.253.88:8001
+            - Paper trading mode by default
+            - Stack: Python, FastAPI, uvicorn, Claude AI, Coinbase API
+            - Key files: web_server.py, bot_controller.py, trading_engine.py,
+              sentiment_analyzer.py, strategy_learner.py, templates/index.html
+            
+            IMPORTANT RULES:
+            - Always maintain paper trading safety (PAPER_TRADING=True default)
+            - Never commit .env or cdp_api_key.json files
+            - Keep all existing functionality when making changes
+            - Test your logic before committing
+            - If you encounter workflow or CI errors, you have permission
+              to fix .github/workflows/claude.yml and commit the fix
+            - Always create a PR, never push directly to main
+            
+            DEPLOYMENT:
+            - After PR is merged, server pulls via: /root/deploy.sh
+            - Dashboard accessible at http://167.71.253.88:8001
