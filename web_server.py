@@ -41,6 +41,7 @@ from pydantic import BaseModel
 
 from bot_controller import BotController
 from cost_tracker import cost_tracker
+from version import get_version_info
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -114,6 +115,8 @@ async def _broadcast_loop() -> None:
             state = bot.get_state()
             # Add cost data to state
             state["costs"] = cost_tracker.get_cost_breakdown()
+            # Add version info to state
+            state["version"] = get_version_info()
             await manager.broadcast(state)
         except Exception as e:
             log.error(f"Broadcast error: {e}")
@@ -138,7 +141,10 @@ app = FastAPI(title="Crypto Sentiment Bot", lifespan=lifespan)
 
 @app.get("/")
 async def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse("index.html", {
+        "request": request,
+        "version": get_version_info()
+    })
 
 
 @app.post("/bot/start")
@@ -265,6 +271,12 @@ async def costs_by_timeframe(timeframe: str):
     if timeframe not in ["inception", "24h", "7d"]:
         return JSONResponse({"error": "Invalid timeframe. Use: inception, 24h, 7d"}, status_code=400)
     return JSONResponse(cost_tracker.get_cost_by_timeframe(timeframe))
+
+
+@app.get("/version")
+async def version_info():
+    """Get app version information."""
+    return JSONResponse(get_version_info())
 
 
 @app.get("/coins/search")

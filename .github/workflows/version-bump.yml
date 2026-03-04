@@ -1,0 +1,285 @@
+name: Auto Version Bump
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    types: [closed]
+    branches: [ main ]
+
+jobs:
+  bump-version:
+    if: github.ref == 'refs/heads/main' || (github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Configure Git
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+      
+      - name: Determine version bump type
+        id: bump-type
+        run: |
+          # Get the latest commit message
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          echo "Commit message: $COMMIT_MSG"
+          
+          # Determine bump type based on commit message or PR title
+          BUMP_TYPE="patch"  # default
+          
+          if echo "$COMMIT_MSG" | grep -qiE "(BREAKING CHANGE|major)"; then
+            BUMP_TYPE="major"
+          elif echo "$COMMIT_MSG" | grep -qiE "(feat|feature|minor)"; then
+            BUMP_TYPE="minor"
+          elif echo "$COMMIT_MSG" | grep -qiE "(fix|patch|bug)"; then
+            BUMP_TYPE="patch"
+          fi
+          
+          echo "bump_type=$BUMP_TYPE" >> $GITHUB_OUTPUT
+          echo "Determined bump type: $BUMP_TYPE"
+      
+      - name: Get current version
+        id: current-version
+        run: |
+          if [ -f version.json ]; then
+            CURRENT_VERSION=$(python3 -c "import json; print(json.load(open('version.json'))['version'])")
+          else
+            CURRENT_VERSION="1.0.0"
+          fi
+          echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          echo "Current version: $CURRENT_VERSION"
+      
+      - name: Calculate new version
+        id: new-version
+        run: |
+          CURRENT="${{ steps.current-version.outputs.current_version }}"
+          BUMP_TYPE="${{ steps.bump-type.outputs.bump_type }}"
+          
+          # Parse current version
+          IFS='.' read -ra VERSION_PARTS <<< "$CURRENT"
+          MAJOR=${VERSION_PARTS[0]}
+          MINOR=${VERSION_PARTS[1]}
+          PATCH=${VERSION_PARTS[2]}
+          
+          # Bump version based on type
+          case $BUMP_TYPE in
+            "major")
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            "minor")
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            "patch")
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+          
+          NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "New version: $NEW_VERSION"
+      
+      - name: Update version files
+        run: |
+          NEW_VERSION="${{ steps.new-version.outputs.new_version }}"
+          COMMIT_HASH=$(git rev-parse HEAD | cut -c1-8)
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          
+          # Update version.py
+          cat > version.py << EOF
+          """
+          Version tracking for Crypto Sentiment Bot.
+          This file is automatically updated by GitHub Actions when changes are merged to main.
+          """
+          import os
+          import json
+          from datetime import datetime
+          from pathlib import Path
+
+          # Current version
+          VERSION = "$NEW_VERSION"
+          BUILD_DATE = "$TIMESTAMP"
+
+          # Path to version metadata file
+          VERSION_FILE = Path(__file__).parent / "version.json"
+
+          def get_version_info():
+              """Get comprehensive version information."""
+              info = {
+                  "version": VERSION,
+                  "build_date": BUILD_DATE,
+                  "last_updated": None,
+                  "commit_hash": None,
+                  "branch": None
+              }
+              
+              # Try to load additional info from version.json if it exists
+              if VERSION_FILE.exists():
+                  try:
+                      with open(VERSION_FILE) as f:
+                          file_data = json.load(f)
+                          info.update(file_data)
+                  except Exception:
+                      pass  # Use defaults if file is corrupted
+              
+              # Try to get git info if available
+              try:
+                  import subprocess
+                  
+                  # Get current commit hash
+                  result = subprocess.run(
+                      ["git", "rev-parse", "HEAD"], 
+                      capture_output=True, 
+                      text=True, 
+                      cwd=Path(__file__).parent
+                  )
+                  if result.returncode == 0:
+                      info["commit_hash"] = result.stdout.strip()[:8]
+              except Exception:
+                  pass
+              
+              # If no last_updated, use build_date
+              if not info["last_updated"]:
+                  info["last_updated"] = BUILD_DATE
+              
+              return info
+
+          def update_version_file(version=None, commit_hash=None, branch=None):
+              """Update the version metadata file (used by CI/CD)."""
+              info = {
+                  "version": version or VERSION,
+                  "build_date": BUILD_DATE,
+                  "last_updated": datetime.utcnow().isoformat() + "Z",
+                  "commit_hash": commit_hash,
+                  "branch": branch
+              }
+              
+              try:
+                  with open(VERSION_FILE, 'w') as f:
+                      json.dump(info, f, indent=2)
+                  return True
+              except Exception as e:
+                  print(f"Failed to update version file: {e}")
+                  return False
+
+          def get_version_string():
+              """Get a formatted version string."""
+              info = get_version_info()
+              version_str = f"v{info['version']}"
+              
+              if info.get('commit_hash'):
+                  version_str += f" ({info['commit_hash']})"
+              
+              return version_str
+
+          def get_last_update_string():
+              """Get a formatted last update string."""
+              info = get_version_info()
+              try:
+                  last_updated = datetime.fromisoformat(info['last_updated'].replace('Z', '+00:00'))
+                  return last_updated.strftime('%Y-%m-%d %H:%M UTC')
+              except Exception:
+                  return "Unknown"
+
+          if __name__ == "__main__":
+              # Print version info for debugging
+              import json
+              print(json.dumps(get_version_info(), indent=2))
+          EOF
+          
+          # Update version.json
+          cat > version.json << EOF
+          {
+            "version": "$NEW_VERSION",
+            "build_date": "$TIMESTAMP",
+            "last_updated": "$TIMESTAMP",
+            "commit_hash": "$COMMIT_HASH",
+            "branch": "main"
+          }
+          EOF
+          
+          echo "Updated version to $NEW_VERSION"
+      
+      - name: Commit version bump
+        run: |
+          NEW_VERSION="${{ steps.new-version.outputs.new_version }}"
+          BUMP_TYPE="${{ steps.bump-type.outputs.bump_type }}"
+          
+          # Check if there are changes to commit
+          if git diff --quiet version.py version.json; then
+            echo "No version changes to commit"
+            exit 0
+          fi
+          
+          git add version.py version.json
+          git commit -m "🚀 Bump version to v$NEW_VERSION ($BUMP_TYPE)
+
+          Auto-generated version bump after merge to main.
+          
+          Previous version: ${{ steps.current-version.outputs.current_version }}
+          New version: $NEW_VERSION
+          Bump type: $BUMP_TYPE
+          
+          🤖 Generated by GitHub Actions"
+          
+          git push origin main
+          
+          echo "Version bumped to v$NEW_VERSION and pushed to main"
+      
+      - name: Create release tag
+        run: |
+          NEW_VERSION="${{ steps.new-version.outputs.new_version }}"
+          
+          # Create and push tag
+          git tag -a "v$NEW_VERSION" -m "Release v$NEW_VERSION
+
+          Auto-generated release tag for version $NEW_VERSION
+          
+          🤖 Generated by GitHub Actions"
+          
+          git push origin "v$NEW_VERSION"
+          
+          echo "Created and pushed tag v$NEW_VERSION"
+      
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ steps.new-version.outputs.new_version }}
+          release_name: Release v${{ steps.new-version.outputs.new_version }}
+          body: |
+            ## 🚀 Release v${{ steps.new-version.outputs.new_version }}
+            
+            **Release Type:** ${{ steps.bump-type.outputs.bump_type }} release
+            **Previous Version:** v${{ steps.current-version.outputs.current_version }}
+            
+            This release was automatically generated when changes were merged to the main branch.
+            
+            ### 📦 Deployment
+            The crypto trading bot running at http://167.71.253.88:8001 will be updated with these changes shortly.
+            
+            ### 🔄 Changelog
+            See the commits between v${{ steps.current-version.outputs.current_version }} and v${{ steps.new-version.outputs.new_version }} for detailed changes.
+            
+            ---
+            🤖 *This release was generated automatically by GitHub Actions*
+          draft: false
+          prerelease: false
