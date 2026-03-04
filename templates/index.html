@@ -206,6 +206,124 @@
     .conn-ok { color: var(--green); }
     .conn-lost { color: var(--red); }
 
+    /* Cost badge */
+    .cost-badge { 
+      font-size: 13px; 
+      padding: 4px 12px; 
+      border-radius: 20px; 
+      background: rgba(245,158,11,.1); 
+      border: 1px solid rgba(245,158,11,.3); 
+      color: var(--yellow); 
+      cursor: pointer; 
+      transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      font-weight: 600;
+    }
+    .cost-badge:hover { 
+      background: rgba(245,158,11,.15); 
+      border-color: rgba(245,158,11,.5); 
+    }
+    .cost-symbol { 
+      font-size: 12px; 
+      opacity: 0.8; 
+    }
+
+    /* Cost details modal */
+    .cost-modal {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 1000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+    .cost-modal.open { display: flex; }
+    .cost-modal-content {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      max-width: 500px;
+      width: 90%;
+      max-height: 70vh;
+      overflow-y: auto;
+    }
+    .cost-modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    .cost-modal-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .cost-modal-close {
+      background: none;
+      border: none;
+      font-size: 20px;
+      color: var(--muted);
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 4px;
+    }
+    .cost-modal-close:hover { color: var(--text); background: var(--surface2); }
+    .cost-summary {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .cost-summary-item {
+      background: var(--surface2);
+      border-radius: 8px;
+      padding: 12px;
+      text-align: center;
+    }
+    .cost-summary-label {
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 4px;
+    }
+    .cost-summary-value {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .cost-service-list {
+      space-y: 12px;
+    }
+    .cost-service {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 0;
+      border-bottom: 1px solid rgba(46,49,80,0.4);
+    }
+    .cost-service:last-child { border-bottom: none; }
+    .cost-service-name {
+      font-weight: 600;
+      color: var(--text);
+    }
+    .cost-service-details {
+      text-align: right;
+    }
+    .cost-service-amount {
+      font-weight: 700;
+      color: var(--text);
+      font-family: monospace;
+    }
+    .cost-service-percent {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
     /* Responsive */
     @media (max-width: 900px) {
       .main { grid-template-columns: 1fr; }
@@ -223,6 +341,12 @@
         gap: 8px;
         flex-direction: column;
         align-items: stretch;
+      }
+      
+      /* Cost badge on mobile - adjust positioning */
+      .cost-badge {
+        align-self: center;
+        margin: 4px 0;
       }
       .topbar-title { 
         font-size: 20px; 
@@ -427,6 +551,9 @@
   <div class="topbar-title">Crypto <span>Sentiment</span> Bot</div>
   <div id="status-badge" class="status-badge status-stopped">Stopped</div>
   <div id="ws-badge" class="conn-badge conn-lost">Connecting...</div>
+  <div id="cost-badge" class="cost-badge" onclick="toggleCostDetails()">
+    <span class="cost-symbol">$</span><span id="cost-amount">0.00</span>
+  </div>
   <div class="topbar-spacer"></div>
   <div class="api-bar" id="api-bar">
     <div class="api-dot" id="api-coinbase"><div class="dot dot-gray"></div>Coinbase</div>
@@ -651,6 +778,36 @@
 
 <div id="toast"></div>
 
+<!-- Cost tracking modal -->
+<div id="cost-modal" class="cost-modal" onclick="closeCostModal(event)">
+  <div class="cost-modal-content" onclick="event.stopPropagation()">
+    <div class="cost-modal-header">
+      <div class="cost-modal-title">💰 App Running Costs</div>
+      <button class="cost-modal-close" onclick="closeCostModal()">&times;</button>
+    </div>
+    
+    <div class="cost-summary">
+      <div class="cost-summary-item">
+        <div class="cost-summary-label">Total Cost</div>
+        <div class="cost-summary-value" id="modal-total-cost">$0.00</div>
+      </div>
+      <div class="cost-summary-item">
+        <div class="cost-summary-label">Daily Average</div>
+        <div class="cost-summary-value" id="modal-daily-avg">$0.00</div>
+      </div>
+    </div>
+    
+    <div class="cost-service-list" id="cost-service-list">
+      <div class="cost-service">
+        <div class="cost-service-name">Loading...</div>
+        <div class="cost-service-details">
+          <div class="cost-service-amount">$0.00</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 "use strict";
 
@@ -700,6 +857,7 @@ function renderAll(s) {
   renderLearning(s.learning || {});
   renderShadows(s.shadows || []);
   renderLogs(s.logs || []);
+  renderCosts(s.costs || {});
   // Banners
   var emergency = s.emergency_mode || (s.status || "").toLowerCase().indexOf("emergency") >= 0;
   document.getElementById("emergency-banner").classList.toggle("hidden", !emergency);
@@ -1097,6 +1255,66 @@ async function loadTrending() {
       addBtn +
     '</div>';
   }).join("");
+}
+
+// ── Cost tracking ────────────────────────────────────────────────────────────
+function renderCosts(costs) {
+  if (!costs || typeof costs.total === 'undefined') {
+    document.getElementById("cost-amount").textContent = "0.00";
+    return;
+  }
+  
+  var total = costs.total || 0;
+  document.getElementById("cost-amount").textContent = total < 0.01 
+    ? total.toFixed(6)
+    : total.toFixed(2);
+}
+
+function toggleCostDetails() {
+  var modal = document.getElementById("cost-modal");
+  modal.classList.add("open");
+  loadCostDetails();
+}
+
+function closeCostModal(event) {
+  if (!event || event.target === document.getElementById("cost-modal") || event.target.classList.contains("cost-modal-close")) {
+    document.getElementById("cost-modal").classList.remove("open");
+  }
+}
+
+async function loadCostDetails() {
+  try {
+    var r = await fetch("/bot/costs").then(function(r) { return r.json(); });
+    
+    // Update summary
+    document.getElementById("modal-total-cost").textContent = fmt$(r.total || 0);
+    document.getElementById("modal-daily-avg").textContent = fmt$(r.daily_average || 0);
+    
+    // Update service list
+    var services = r.services || {};
+    var serviceKeys = Object.keys(services);
+    var listEl = document.getElementById("cost-service-list");
+    
+    if (serviceKeys.length === 0) {
+      listEl.innerHTML = '<div class="cost-service"><div class="cost-service-name">No costs tracked yet</div><div class="cost-service-details"><div class="cost-service-amount">$0.00</div></div></div>';
+      return;
+    }
+    
+    listEl.innerHTML = serviceKeys.map(function(serviceName) {
+      var service = services[serviceName];
+      return '<div class="cost-service">' +
+        '<div class="cost-service-name">' + esc(serviceName) + '</div>' +
+        '<div class="cost-service-details">' +
+          '<div class="cost-service-amount">' + fmt$(service.total || 0) + '</div>' +
+          '<div class="cost-service-percent">' + (service.percentage || 0).toFixed(1) + '% • ' + (service.calls || 0) + ' calls</div>' +
+        '</div>' +
+      '</div>';
+    }).join("");
+    
+  } catch (e) {
+    console.error("Failed to load cost details:", e);
+    toast("err", "Failed to load cost details");
+  }
 }
 
 // ── Utilities ────────────────────────────────────────────────────────────────

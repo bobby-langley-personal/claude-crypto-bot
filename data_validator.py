@@ -31,6 +31,8 @@ Each function returns a dict with:
 import logging
 import requests
 
+from cost_tracker import cost_tracker
+
 log = logging.getLogger(__name__)
 
 # Flag price divergence above this threshold (2 % by default)
@@ -84,6 +86,10 @@ def _fetch_coingecko(symbols: list[str]) -> dict[str, float]:
             timeout=10,
         )
         resp.raise_for_status()
+        
+        # Track CoinGecko API call
+        cost_tracker.track_api_call("coingecko")
+        
         data = resp.json()
         return {
             sym: float(data[cg_id]["usd"])
@@ -240,6 +246,10 @@ def lookup_coingecko_id(symbol: str) -> str | None:
             timeout=10,
         )
         resp.raise_for_status()
+        
+        # Track CoinGecko API call
+        cost_tracker.track_api_call("coingecko")
+        
         for coin in resp.json().get("coins", []):
             if coin.get("symbol", "").upper() == sym:
                 return coin["id"]
