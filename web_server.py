@@ -117,7 +117,7 @@ async def _broadcast_loop() -> None:
             await manager.broadcast(state)
         except Exception as e:
             log.error(f"Broadcast error: {e}")
-        await asyncio.sleep(2)
+        await asyncio.sleep(60)  # Update every minute (reduced from 2 seconds)
 
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
