@@ -51,6 +51,7 @@ jobs:
               to fix .github/workflows/claude.yml and commit the fix
             - Push directly to Main if test cases all pass. 
             - For simple UI/CSS changes use the most efficient approach. For logic changes, strategy updates, and new features take the time and model best-fit to do it properly.
+            - Always rebase on latest main before starting work. Run: git fetch origin && git rebase origin/main If conflicts exist with other claude/* branches, resolve conservatively — keep both sets of changes where possible. Never discard functionality added by other branches.
             
             DEPLOYMENT:
             - After PR is merged, server pulls via: /root/deploy.sh
