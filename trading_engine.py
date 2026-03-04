@@ -73,6 +73,58 @@ class TradingEngine:
         self.strategy_mode = mode
         log.info(f"[Engine] Strategy mode set to: {mode}")
     
+    def sell_single_position_for_proof(self, target_profit_pct: float = 5.0) -> dict | None:
+        """
+        Sell the first profitable position at the earliest profit margin 
+        to provide proof that selling functionality works. One-time demonstration.
+        
+        Args:
+            target_profit_pct: Minimum profit percentage to sell (default 5%)
+            
+        Returns:
+            Trade record if a sell occurred, None otherwise
+        """
+        if not self.portfolio.positions:
+            log.info("No open positions to sell for proof")
+            return None
+            
+        # Find the most profitable position above the target
+        best_candidate = None
+        best_pnl = 0
+        
+        for symbol, pos in self.portfolio.positions.items():
+            price = self.last_prices.get(symbol)
+            if not price:
+                continue
+                
+            pnl = self.portfolio.get_position_pnl(symbol, price)
+            if not pnl:
+                continue
+                
+            pnl_pct = pnl["pnl_pct"]
+            if pnl_pct >= target_profit_pct and pnl_pct > best_pnl:
+                best_candidate = symbol
+                best_pnl = pnl_pct
+                
+        if best_candidate:
+            price = self.last_prices[best_candidate]
+            log.info(f"🎯 PROOF SELL: {best_candidate} at +{best_pnl:.1f}% profit for demonstration")
+            trade = self.portfolio.sell(
+                best_candidate, price, reason="proof_demonstration",
+                reason_detail=f"Early profit-taking demonstration at +{best_pnl:.1f}% (target was {target_profit_pct}%)",
+                trigger_price=price,
+                trigger_conditions={
+                    "proof_sell": True, 
+                    "target_profit_pct": target_profit_pct,
+                    "actual_pct": best_pnl,
+                    "demonstration": "First sell to prove functionality works"
+                }
+            )
+            return trade
+        else:
+            log.info(f"No positions currently above {target_profit_pct}% profit for proof sell")
+            return None
+    
     def _get_effective_threshold(self, score: float, symbol: str) -> float:
         """Calculate effective threshold based on current strategy mode."""
         base_threshold = self.threshold
@@ -174,19 +226,25 @@ class TradingEngine:
             log.info(f"  {symbol} P&L: {pct:+.2f}%")
 
             if pct >= self.take_profit_pct:
+                target_price = pnl["entry_price"] * (1 + self.take_profit_pct / 100)
                 log.info(f"  -> TAKE PROFIT ({pct:.1f}% >= +{self.take_profit_pct}%)")
                 trade = self.portfolio.sell(
                     symbol, price, reason="take_profit",
                     reason_detail=f"+{pct:.1f}% reached take-profit target (+{self.take_profit_pct}%)",
+                    trigger_price=target_price,
+                    trigger_conditions={"profit_target_pct": self.take_profit_pct, "actual_pct": pct}
                 )
                 if trade:
                     summary["sells"].append(trade)
 
             elif pct <= self.stop_loss_pct:
+                stop_price = pnl["entry_price"] * (1 + self.stop_loss_pct / 100)
                 log.info(f"  -> STOP LOSS ({pct:.1f}% <= {self.stop_loss_pct}%)")
                 trade = self.portfolio.sell(
                     symbol, price, reason="stop_loss",
                     reason_detail=f"{pct:.1f}% triggered stop-loss ({self.stop_loss_pct}%)",
+                    trigger_price=stop_price,
+                    trigger_conditions={"stop_loss_pct": self.stop_loss_pct, "actual_pct": pct}
                 )
                 if trade:
                     summary["sells"].append(trade)
@@ -204,6 +262,7 @@ class TradingEngine:
                     trade = self.portfolio.sell(
                         symbol, price, reason="overbought",
                         reason_detail=f"RSI {rsi:.0f} exceeded overbought threshold ({RSI_OVERBOUGHT_EXIT})",
+                        trigger_conditions={"rsi": rsi, "rsi_threshold": RSI_OVERBOUGHT_EXIT, "technical_signals": sigs}
                     )
                     if trade:
                         summary["sells"].append(trade)
@@ -372,16 +431,22 @@ class TradingEngine:
             pct = pnl["pnl_pct"]
 
             if pct >= self.take_profit_pct:
+                target_price = pnl["entry_price"] * (1 + self.take_profit_pct / 100)
                 trade = self.portfolio.sell(
                     symbol, price, reason="take_profit",
                     reason_detail=f"+{pct:.1f}% reached take-profit (+{self.take_profit_pct}%)",
+                    trigger_price=target_price,
+                    trigger_conditions={"profit_target_pct": self.take_profit_pct, "actual_pct": pct}
                 )
                 if trade:
                     summary["sells"].append(trade)
             elif pct <= self.stop_loss_pct:
+                stop_price = pnl["entry_price"] * (1 + self.stop_loss_pct / 100)
                 trade = self.portfolio.sell(
                     symbol, price, reason="stop_loss",
                     reason_detail=f"{pct:.1f}% triggered stop-loss ({self.stop_loss_pct}%)",
+                    trigger_price=stop_price,
+                    trigger_conditions={"stop_loss_pct": self.stop_loss_pct, "actual_pct": pct}
                 )
                 if trade:
                     summary["sells"].append(trade)
@@ -392,6 +457,7 @@ class TradingEngine:
                     trade = self.portfolio.sell(
                         symbol, price, reason="overbought",
                         reason_detail=f"RSI {rsi:.0f} exceeded overbought threshold",
+                        trigger_conditions={"rsi": rsi, "rsi_threshold": RSI_OVERBOUGHT_EXIT, "technical_signals": tech}
                     )
                     if trade:
                         summary["sells"].append(trade)
