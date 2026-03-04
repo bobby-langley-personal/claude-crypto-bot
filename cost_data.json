@@ -1,18 +1,18 @@
 {
-  "total_cost": 0.028500000000000004,
+  "total_cost": 0.031308,
   "daily_costs": [
     {
       "date": "2026-03-04",
-      "total": 0.028500000000000004,
+      "total": 0.031308,
       "services": {
-        "claude_api": 0.028500000000000004
+        "claude_api": 0.031308
       }
     }
   ],
   "service_totals": {
     "claude_api": {
-      "total": 0.028500000000000004,
-      "calls": 2,
+      "total": 0.031308,
+      "calls": 3,
       "metadata": [
         {
           "input_tokens": 1000,
@@ -23,10 +23,38 @@
           "input_tokens": 2000,
           "output_tokens": 800,
           "timestamp": "2026-03-04T17:24:43.526741"
+        },
+        {
+          "input_tokens": 1000,
+          "output_tokens": 500,
+          "cache_read_tokens": 100,
+          "model": "claude-haiku",
+          "timestamp": "2026-03-04T22:31:44.111636"
         }
       ]
     }
   },
   "last_reset": "2026-03-04T17:24:28.544076",
-  "session_start": "2026-03-04T17:24:28.544086"
+  "session_start": "2026-03-04T17:24:28.544086",
+  "claude_models": {
+    "claude_haiku": {
+      "total_cost": 0.002808,
+      "total_calls": 1,
+      "total_input_tokens": 1000,
+      "total_output_tokens": 500,
+      "total_cache_read_tokens": 100,
+      "calls_history": [
+        {
+          "input_tokens": 1000,
+          "output_tokens": 500,
+          "cache_read_tokens": 100,
+          "input_cost": 0.0007999999999999999,
+          "output_cost": 0.002,
+          "cache_cost": 8e-06,
+          "total_cost": 0.002808,
+          "timestamp": "2026-03-04T22:31:44.111636"
+        }
+      ]
+    }
+  }
 }

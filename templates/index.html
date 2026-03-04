@@ -84,8 +84,8 @@
       <div class="flex items-center gap-1.5 text-xs text-amber-400 cursor-pointer hover:text-amber-300 transition-colors"
            @click="showCostModal = true"
            title="Click to view detailed cost breakdown">
-        <span class="text-xs">$</span>
-        <span x-text="formatCost(s.costs?.total || 0)"></span>
+        <span class="text-xs">App Cost:</span>
+        <span x-text="formatCost(s.costs?.total || 0)" class="font-mono"></span>
       </div>
 
       <!-- Manual refresh (cycle now) -->
@@ -880,17 +880,31 @@
   <div x-show="showCostModal" 
        class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4"
        @click.self="showCostModal = false">
-    <div class="bg-navy-900 border border-slate-700 rounded-xl p-6 max-w-lg w-full max-h-[80vh] overflow-y-auto">
-      <div class="flex items-center justify-between mb-4">
-        <h3 class="text-lg font-bold text-white">💰 App Running Costs</h3>
+    <div class="bg-navy-900 border border-slate-700 rounded-xl p-6 max-w-4xl w-full max-h-[80vh] overflow-y-auto">
+      <div class="flex items-center justify-between mb-6">
+        <h3 class="text-lg font-bold text-white">💰 App Cost: <span x-text="fmtUSD(s.costs?.total || 0)" class="text-amber-400"></span></h3>
         <button @click="showCostModal = false"
                 class="text-slate-500 hover:text-slate-300 text-xl">×</button>
       </div>
       
-      <div class="grid grid-cols-2 gap-4 mb-4">
+      <!-- Time filter toggle -->
+      <div class="flex gap-2 mb-4 justify-center">
+        <button @click="costTimeframe = 'inception'" 
+                :class="costTimeframe === 'inception' ? 'bg-cyan-700 text-white' : 'bg-navy-800 text-slate-400'"
+                class="px-3 py-1 rounded text-sm">Since Inception</button>
+        <button @click="costTimeframe = '7d'" 
+                :class="costTimeframe === '7d' ? 'bg-cyan-700 text-white' : 'bg-navy-800 text-slate-400'"
+                class="px-3 py-1 rounded text-sm">Last 7 Days</button>
+        <button @click="costTimeframe = '24h'" 
+                :class="costTimeframe === '24h' ? 'bg-cyan-700 text-white' : 'bg-navy-800 text-slate-400'"
+                class="px-3 py-1 rounded text-sm">Last 24h</button>
+      </div>
+      
+      <!-- Summary stats -->
+      <div class="grid grid-cols-2 gap-4 mb-6">
         <div class="bg-navy-800 rounded-lg p-3 text-center">
-          <div class="text-slate-500 text-xs uppercase tracking-wider">Total Cost</div>
-          <div class="text-xl font-bold text-white" x-text="fmtUSD(s.costs?.total || 0)"></div>
+          <div class="text-slate-500 text-xs uppercase tracking-wider">App Cost</div>
+          <div class="text-xl font-bold text-white" x-text="fmtUSD(getCurrentCosts().total || 0)"></div>
         </div>
         <div class="bg-navy-800 rounded-lg p-3 text-center">
           <div class="text-slate-500 text-xs uppercase tracking-wider">Daily Average</div>
@@ -898,22 +912,85 @@
         </div>
       </div>
       
-      <div class="space-y-3">
-        <template x-for="[serviceName, service] in Object.entries(s.costs?.services || {})" :key="serviceName">
-          <div class="flex justify-between items-center py-2 border-b border-slate-800/40 last:border-0">
-            <div>
-              <div class="font-bold text-slate-200" x-text="serviceName"></div>
-              <div class="text-xs text-slate-500"
-                   x-text="(service.calls || 0) + ' calls • ' + (service.percentage || 0).toFixed(1) + '%'"></div>
+      <!-- Services section -->
+      <div class="mb-6">
+        <h4 class="text-md font-bold text-white mb-3">All Services</h4>
+        <div class="space-y-3">
+          <template x-for="[serviceName, service] in Object.entries(getCurrentCosts().services || {})" :key="serviceName">
+            <div class="flex justify-between items-center py-2 px-3 bg-navy-800/50 rounded-lg">
+              <div>
+                <div class="font-bold text-slate-200" x-text="serviceName"></div>
+                <div class="text-xs text-slate-500"
+                     x-text="(service.calls || 0) + ' calls • ' + (service.percentage || 0).toFixed(1) + '%'"></div>
+              </div>
+              <div class="text-right">
+                <div class="font-bold font-mono" 
+                     :class="service.total > 0 ? 'text-amber-400' : 'text-emerald-400'"
+                     x-text="service.total > 0 ? fmtUSD(service.total) : 'Free'"></div>
+              </div>
             </div>
-            <div class="text-right">
-              <div class="font-bold font-mono" x-text="fmtUSD(service.total || 0)"></div>
+          </template>
+          <div x-show="Object.keys(getCurrentCosts().services || {}).length === 0"
+               class="text-center text-slate-600 py-4">
+            No costs tracked yet for this timeframe
+          </div>
+        </div>
+      </div>
+
+      <!-- Claude models section -->
+      <div class="mb-4">
+        <div class="flex justify-between items-center mb-3">
+          <h4 class="text-md font-bold text-white">Claude API Breakdown</h4>
+          <button @click="showClaudeDetails = !showClaudeDetails"
+                  class="px-3 py-1 bg-cyan-900/40 hover:bg-cyan-800/60 border border-cyan-700/40 text-cyan-400 rounded text-xs">
+            <span x-show="!showClaudeDetails">Show Historical Details</span>
+            <span x-show="showClaudeDetails">Hide Details</span>
+          </button>
+        </div>
+        
+        <!-- Claude model breakdown table -->
+        <div class="bg-navy-800 rounded-lg overflow-hidden">
+          <table class="w-full text-sm">
+            <thead class="bg-navy-700">
+              <tr>
+                <th class="text-left px-3 py-2 text-slate-300">Model</th>
+                <th class="text-right px-3 py-2 text-slate-300">Calls</th>
+                <th class="text-right px-3 py-2 text-slate-300">Input Tokens</th>
+                <th class="text-right px-3 py-2 text-slate-300">Output Tokens</th>
+                <th class="text-right px-3 py-2 text-slate-300">Cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="[modelName, model] in Object.entries(getCurrentCosts().claude_models || {})" :key="modelName">
+                <tr class="border-b border-slate-700/30 last:border-0">
+                  <td class="px-3 py-2 font-mono text-cyan-400" x-text="modelName"></td>
+                  <td class="px-3 py-2 text-right text-slate-300" x-text="(model.calls || 0).toLocaleString()"></td>
+                  <td class="px-3 py-2 text-right text-slate-300" x-text="(model.input_tokens || 0).toLocaleString()"></td>
+                  <td class="px-3 py-2 text-right text-slate-300" x-text="(model.output_tokens || 0).toLocaleString()"></td>
+                  <td class="px-3 py-2 text-right font-bold text-amber-400" x-text="fmtUSD(model.cost || 0)"></td>
+                </tr>
+              </template>
+              <tr x-show="Object.keys(getCurrentCosts().claude_models || {}).length === 0">
+                <td colspan="5" class="px-3 py-4 text-center text-slate-600">No Claude API usage tracked yet</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        
+        <!-- Historical details (when expanded) -->
+        <div x-show="showClaudeDetails" class="mt-4 bg-navy-800/50 rounded-lg p-4" x-transition>
+          <h5 class="text-sm font-bold text-slate-300 mb-2">Timestamps and Cost Accumulation</h5>
+          <div class="text-xs text-slate-500 space-y-1 max-h-32 overflow-y-auto">
+            <template x-for="call in getClaudeCallHistory()" :key="call.timestamp">
+              <div class="flex justify-between">
+                <span x-text="fmtTs(call.timestamp)"></span>
+                <span x-text="call.model + ' • ' + fmtUSD(call.total_cost)"></span>
+              </div>
+            </template>
+            <div x-show="getClaudeCallHistory().length === 0" class="text-center py-2">
+              No detailed call history available
             </div>
           </div>
-        </template>
-        <div x-show="Object.keys(s.costs?.services || {}).length === 0"
-             class="text-center text-slate-600 py-4">
-          No costs tracked yet
         </div>
       </div>
     </div>
@@ -936,6 +1013,10 @@ function app() {
     expandedTrade: null,
     tradeFilter: 'all',
     showCostModal: false,
+    showClaudeDetails: false,
+    costTimeframe: 'inception',
+    costsByTimeframe: {},
+    claudeCallHistory: [],
     
     // UI state
     showAddCoin: false,
@@ -1313,6 +1394,52 @@ function app() {
     formatCost(value) {
       if (value == null || value === 0) return '0.00';
       return value < 0.01 ? value.toFixed(6) : value.toFixed(2);
+    },
+
+    async getCurrentCosts() {
+      if (this.costTimeframe === 'inception') {
+        return this.s.costs || {};
+      }
+      
+      // Fetch costs for specific timeframe if not cached
+      if (!this.costsByTimeframe[this.costTimeframe]) {
+        try {
+          const response = await fetch(`/bot/costs/${this.costTimeframe}`);
+          if (response.ok) {
+            this.costsByTimeframe[this.costTimeframe] = await response.json();
+          } else {
+            this.costsByTimeframe[this.costTimeframe] = this.s.costs || {};
+          }
+        } catch (error) {
+          console.error('Error fetching costs:', error);
+          this.costsByTimeframe[this.costTimeframe] = this.s.costs || {};
+        }
+      }
+      
+      return this.costsByTimeframe[this.costTimeframe] || {};
+    },
+
+    async getClaudeCallHistory() {
+      if (!this.claudeCallHistory.length && this.s.costs?.services?.['Claude AI']) {
+        try {
+          const response = await fetch('/bot/costs/claude');
+          if (response.ok) {
+            const data = await response.json();
+            // Extract call history from the detailed model data
+            this.claudeCallHistory = [];
+            Object.values(data.models || {}).forEach(model => {
+              if (model.calls_history) {
+                this.claudeCallHistory.push(...model.calls_history);
+              }
+            });
+            // Sort by timestamp (newest first)
+            this.claudeCallHistory.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+          }
+        } catch (error) {
+          console.error('Error fetching Claude history:', error);
+        }
+      }
+      return this.claudeCallHistory.slice(0, 20); // Show last 20 calls
     },
 
     formatDateTime(timestamp) {

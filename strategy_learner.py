@@ -397,12 +397,30 @@ Rules:
             log.warning("[Learner] No Anthropic API key – skipping learning cycle")
             return None
         try:
+            from cost_tracker import cost_tracker
+            
             client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
             msg = client.messages.create(
                 model="claude-haiku-4-5-20251001",
                 max_tokens=1000,
                 messages=[{"role": "user", "content": prompt}],
             )
+            
+            # Track cost for this API call using actual token counts
+            if hasattr(msg, 'usage') and msg.usage:
+                input_tokens = msg.usage.input_tokens
+                output_tokens = msg.usage.output_tokens
+                cache_read_tokens = getattr(msg.usage, 'cache_read_tokens', 0)
+                model = "claude-haiku"
+            else:
+                # Fallback to estimates
+                input_tokens = len(prompt.split()) * 1.3
+                output_tokens = len(msg.content[0].text.split()) * 1.3
+                cache_read_tokens = 0
+                model = "claude-haiku"
+                
+            cost_tracker.track_claude_usage(int(input_tokens), int(output_tokens), int(cache_read_tokens), model)
+            
             return msg.content[0].text.strip()
         except Exception as e:
             log.error(f"[Learner] Claude API error: {e}")

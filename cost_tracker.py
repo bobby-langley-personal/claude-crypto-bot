@@ -24,11 +24,22 @@ class CostTracker:
         self.cost_file = Path(cost_file)
         self.data = self._load_data()
         
-        # Pricing estimates (USD)
+        # Pricing estimates (USD) - Current published rates as of Jan 2025
         self.prices = {
-            "claude_api": {
-                "input_tokens": 0.00000300,   # $3 per million input tokens (Claude Haiku)
-                "output_tokens": 0.00001500,  # $15 per million output tokens
+            "claude_haiku": {
+                "input_tokens": 0.00000080,   # $0.80 per million input tokens
+                "output_tokens": 0.00000400,  # $4.00 per million output tokens
+                "cache_read_tokens": 0.00000008,  # $0.08 per million cache read tokens
+            },
+            "claude_sonnet": {
+                "input_tokens": 0.00000300,   # $3.00 per million input tokens
+                "output_tokens": 0.00001500,  # $15.00 per million output tokens  
+                "cache_read_tokens": 0.00000030,  # $0.30 per million cache read tokens
+            },
+            "claude_opus": {
+                "input_tokens": 0.00001500,   # $15.00 per million input tokens
+                "output_tokens": 0.00007500,  # $75.00 per million output tokens
+                "cache_read_tokens": 0.00000150,  # $1.50 per million cache read tokens
             },
             "cryptopanic_api": 0.00,          # Free tier
             "reddit_api": 0.00,               # Free
@@ -44,6 +55,7 @@ class CostTracker:
                 "total_cost": 0.0,
                 "daily_costs": [],
                 "service_totals": {},
+                "claude_models": {},
                 "last_reset": datetime.now().isoformat(),
                 "session_start": datetime.now().isoformat(),
             }
@@ -62,19 +74,77 @@ class CostTracker:
         except Exception as e:
             print(f"Warning: Could not save cost data: {e}")
     
-    def track_claude_usage(self, input_tokens: int, output_tokens: int) -> float:
-        """Track Claude API usage and return cost for this call."""
-        input_cost = input_tokens * self.prices["claude_api"]["input_tokens"]
-        output_cost = output_tokens * self.prices["claude_api"]["output_tokens"]
-        total_cost = input_cost + output_cost
+    def track_claude_usage(self, input_tokens: int, output_tokens: int, cache_read_tokens: int = 0, model: str = "claude-haiku") -> float:
+        """Track Claude API usage and return cost for this call.
         
+        Args:
+            input_tokens: Number of input tokens consumed
+            output_tokens: Number of output tokens generated
+            cache_read_tokens: Number of cached tokens read (optional)
+            model: Claude model used (claude-haiku, claude-sonnet, claude-opus)
+        """
+        # Normalize model name to match pricing keys
+        model_key = model.replace("-4-5-20251001", "").replace("-20250514", "")
+        if model_key not in self.prices:
+            model_key = "claude_haiku"  # Default fallback
+            
+        pricing = self.prices[model_key]
+        input_cost = input_tokens * pricing["input_tokens"]
+        output_cost = output_tokens * pricing["output_tokens"]
+        cache_cost = cache_read_tokens * pricing["cache_read_tokens"]
+        total_cost = input_cost + output_cost + cache_cost
+        
+        timestamp = datetime.now().isoformat()
+        
+        # Track by specific model
+        self._add_claude_model_cost(model_key, {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cache_read_tokens": cache_read_tokens,
+            "input_cost": input_cost,
+            "output_cost": output_cost,
+            "cache_cost": cache_cost,
+            "total_cost": total_cost,
+            "timestamp": timestamp
+        })
+        
+        # Also track in legacy claude_api service for backwards compatibility
         self._add_cost("claude_api", total_cost, {
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
-            "timestamp": datetime.now().isoformat()
+            "cache_read_tokens": cache_read_tokens,
+            "model": model,
+            "timestamp": timestamp
         })
         
         return total_cost
+    
+    def _add_claude_model_cost(self, model: str, cost_data: dict) -> None:
+        """Add cost tracking specifically for Claude models."""
+        if "claude_models" not in self.data:
+            self.data["claude_models"] = {}
+            
+        if model not in self.data["claude_models"]:
+            self.data["claude_models"][model] = {
+                "total_cost": 0.0,
+                "total_calls": 0,
+                "total_input_tokens": 0,
+                "total_output_tokens": 0,
+                "total_cache_read_tokens": 0,
+                "calls_history": []
+            }
+            
+        model_data = self.data["claude_models"][model]
+        model_data["total_cost"] += cost_data["total_cost"]
+        model_data["total_calls"] += 1
+        model_data["total_input_tokens"] += cost_data["input_tokens"]
+        model_data["total_output_tokens"] += cost_data["output_tokens"]
+        model_data["total_cache_read_tokens"] += cost_data["cache_read_tokens"]
+        
+        # Keep detailed call history (last 100 calls per model)
+        model_data["calls_history"].append(cost_data)
+        if len(model_data["calls_history"]) > 100:
+            model_data["calls_history"] = model_data["calls_history"][-100:]
     
     def track_api_call(self, service: str, calls: int = 1) -> float:
         """Track API calls for news services (currently free)."""
@@ -205,6 +275,103 @@ class CostTracker:
             }
         
         return breakdown
+    
+    def get_claude_model_breakdown(self) -> dict:
+        """Get detailed breakdown of costs by Claude model."""
+        claude_models = self.data.get("claude_models", {})
+        
+        breakdown = {
+            "total_claude_cost": sum(model_data.get("total_cost", 0.0) for model_data in claude_models.values()),
+            "models": {}
+        }
+        
+        for model, data in claude_models.items():
+            breakdown["models"][model] = {
+                "calls": data.get("total_calls", 0),
+                "input_tokens": data.get("total_input_tokens", 0),
+                "output_tokens": data.get("total_output_tokens", 0),
+                "cache_read_tokens": data.get("total_cache_read_tokens", 0),
+                "cost": data.get("total_cost", 0.0)
+            }
+            
+        return breakdown
+    
+    def get_cost_by_timeframe(self, timeframe: str) -> dict:
+        """Get cost breakdown for specific timeframes: 'inception', '24h', '7d'."""
+        now = datetime.now()
+        
+        if timeframe == "inception":
+            return self.get_cost_breakdown()
+        elif timeframe == "24h":
+            cutoff = now - timedelta(hours=24)
+        elif timeframe == "7d":
+            cutoff = now - timedelta(days=7)
+        else:
+            return self.get_cost_breakdown()
+            
+        # Filter costs by timeframe
+        total_cost = 0.0
+        services = {}
+        claude_models = {}
+        
+        # Filter service costs
+        service_totals = self.data.get("service_totals", {})
+        for service, data in service_totals.items():
+            service_cost = 0.0
+            service_calls = 0
+            
+            for metadata in data.get("metadata", []):
+                try:
+                    timestamp = datetime.fromisoformat(metadata.get("timestamp", ""))
+                    if timestamp >= cutoff:
+                        # Extract cost from metadata if available
+                        if "total_cost" in metadata:
+                            service_cost += metadata["total_cost"]
+                        service_calls += 1
+                except (ValueError, TypeError):
+                    continue
+                    
+            if service_cost > 0 or service_calls > 0:
+                services[service] = {
+                    "total": service_cost,
+                    "calls": service_calls
+                }
+                total_cost += service_cost
+        
+        # Filter Claude model costs
+        claude_model_data = self.data.get("claude_models", {})
+        for model, data in claude_model_data.items():
+            model_cost = 0.0
+            model_calls = 0
+            input_tokens = 0
+            output_tokens = 0
+            
+            for call_data in data.get("calls_history", []):
+                try:
+                    timestamp = datetime.fromisoformat(call_data.get("timestamp", ""))
+                    if timestamp >= cutoff:
+                        model_cost += call_data.get("total_cost", 0.0)
+                        model_calls += 1
+                        input_tokens += call_data.get("input_tokens", 0)
+                        output_tokens += call_data.get("output_tokens", 0)
+                except (ValueError, TypeError):
+                    continue
+                    
+            if model_cost > 0:
+                claude_models[model] = {
+                    "calls": model_calls,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "cost": model_cost
+                }
+        
+        return {
+            "total": total_cost,
+            "timeframe": timeframe,
+            "services": services,
+            "claude_models": claude_models,
+            "last_updated": datetime.now().isoformat()
+        }
     
     def reset_daily_costs(self) -> None:
         """Reset daily cost tracking (for new day)."""
