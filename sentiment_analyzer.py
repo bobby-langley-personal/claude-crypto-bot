@@ -77,10 +77,20 @@ def analyze_sentiment(coin_symbol: str, news_text: str) -> dict:
             messages=[{"role": "user", "content": prompt}],
         )
         
-        # Track cost for this API call
-        input_tokens = message.usage.input_tokens if hasattr(message, 'usage') else len(prompt.split()) * 1.3  # rough estimate
-        output_tokens = message.usage.output_tokens if hasattr(message, 'usage') else len(message.content[0].text.split()) * 1.3
-        cost_tracker.track_claude_usage(int(input_tokens), int(output_tokens))
+        # Track cost for this API call using actual token counts from API response
+        if hasattr(message, 'usage') and message.usage:
+            input_tokens = message.usage.input_tokens
+            output_tokens = message.usage.output_tokens
+            cache_read_tokens = getattr(message.usage, 'cache_read_tokens', 0)
+            model = "claude-haiku"
+        else:
+            # Fallback to rough estimates if usage data not available
+            input_tokens = len(prompt.split()) * 1.3
+            output_tokens = len(message.content[0].text.split()) * 1.3
+            cache_read_tokens = 0
+            model = "claude-haiku"
+            
+        cost_tracker.track_claude_usage(int(input_tokens), int(output_tokens), int(cache_read_tokens), model)
         
         raw = message.content[0].text.strip()
         log.debug(f"Claude raw response for {coin_symbol}:\n{raw}")

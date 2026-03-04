@@ -117,7 +117,7 @@ async def _broadcast_loop() -> None:
             await manager.broadcast(state)
         except Exception as e:
             log.error(f"Broadcast error: {e}")
-        await asyncio.sleep(2)
+        await asyncio.sleep(60)  # Update every minute (reduced from 2 seconds)
 
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
@@ -251,6 +251,20 @@ async def highlights():
 @app.get("/bot/costs")
 async def costs():
     return JSONResponse(cost_tracker.get_cost_breakdown())
+
+
+@app.get("/bot/costs/claude")
+async def claude_costs():
+    """Get detailed Claude model cost breakdown."""
+    return JSONResponse(cost_tracker.get_claude_model_breakdown())
+
+
+@app.get("/bot/costs/{timeframe}")
+async def costs_by_timeframe(timeframe: str):
+    """Get cost breakdown by timeframe (inception, 24h, 7d)."""
+    if timeframe not in ["inception", "24h", "7d"]:
+        return JSONResponse({"error": "Invalid timeframe. Use: inception, 24h, 7d"}, status_code=400)
+    return JSONResponse(cost_tracker.get_cost_by_timeframe(timeframe))
 
 
 @app.get("/coins/search")
