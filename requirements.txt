@@ -17,3 +17,6 @@ coinbase-advanced-py>=1.7.0
 # AWS deployment (used by deploy/deploy_aws.py only)
 boto3>=1.28.0
 paramiko>=3.0.0
+
+# Error monitoring and health checks
+requests>=2.31.0

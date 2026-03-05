@@ -1,0 +1,20 @@
+[
+  {
+    "id": "111dbb292937",
+    "timestamp": "2026-03-05T05:45:15.293621+00:00",
+    "error_type": "ValueError",
+    "error_message": "Test error for validation",
+    "context": "system test",
+    "severity": "warning",
+    "component": "test",
+    "stack_trace": "Traceback (most recent call last):\n  File \"<string>\", line 6, in <module>\nValueError: Test error for validation\n",
+    "resolved": false,
+    "github_issue_created": false,
+    "github_issue_url": null,
+    "fix_attempted": false,
+    "fix_description": null,
+    "occurrence_count": 1,
+    "first_occurred": "2026-03-05T05:45:15.293621+00:00",
+    "last_occurred": "2026-03-05T05:45:15.293621+00:00"
+  }
+]

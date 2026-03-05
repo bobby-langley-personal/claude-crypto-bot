@@ -32,6 +32,8 @@ from paper_portfolio import PaperPortfolio
 from trading_engine import TradingEngine
 from dashboard import make_renderable
 from log_buffer import LogBuffer, LogBufferHandler
+from error_logger import log_error
+from health_scheduler import health_scheduler
 
 # ── Log buffer (captures all log records for the dashboard debug panel) ───────
 log_buffer = LogBuffer(maxlen=500)
@@ -88,7 +90,9 @@ def trading_loop(engine: TradingEngine) -> None:
             )
         except Exception as e:
             log.exception("Unhandled error in trading cycle")
-            state["status"] = f"ERROR: {e}"
+            # Log the error to our error tracking system
+            error_id = log_error(e, "trading cycle execution", "error", "main")
+            state["status"] = f"ERROR: {str(e)[:50]}... (ID: {error_id})"
 
         next_dt = datetime.now(timezone.utc) + timedelta(seconds=interval_secs)
         state["next_check"] = next_dt.strftime("%H:%M:%S UTC")
@@ -156,6 +160,9 @@ def main() -> None:
     ).start()
 
     log.info("Background threads started. Dashboard launching…")
+    
+    # Start health monitoring
+    health_scheduler.start()
 
     # ── Dashboard loop (main thread) ──────────────────────────────────────────
     # rich.live.Live keeps the dashboard updated in-place without flickering.
@@ -190,6 +197,7 @@ def main() -> None:
     except KeyboardInterrupt:
         log.info("\nCtrl+C received – shutting down…")
         state["running"] = False
+        health_scheduler.stop()
         time.sleep(1)
         log.info("Bot stopped. Portfolio saved to portfolio.json")
 
