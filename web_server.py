@@ -31,7 +31,10 @@ On AWS (systemd starts this automatically after deployment):
 import asyncio
 import json
 import logging
+import subprocess
+import time
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
@@ -57,6 +60,7 @@ log = logging.getLogger("web_server")
 # ── Core objects ──────────────────────────────────────────────────────────────
 bot       = BotController()
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+_start_time = time.time()  # Track server start time for uptime calculation
 
 
 # ── Request models ────────────────────────────────────────────────────────────
@@ -120,6 +124,9 @@ async def _broadcast_loop() -> None:
             state["costs"] = cost_tracker.get_cost_breakdown()
             # Add version info to state
             state["version"] = get_version_info()
+            # Add uptime and git version
+            state["uptime_seconds"] = get_uptime()
+            state["git_version"] = get_version()
             await manager.broadcast(state)
         except Exception as e:
             log.error(f"Broadcast error: {e}")
@@ -331,12 +338,34 @@ async def version_info():
     return JSONResponse(get_version_info())
 
 
+# ── Helper functions ──────────────────────────────────────────────────────────
+
+def get_uptime() -> float:
+    """Get uptime in seconds since the web server started."""
+    return time.time() - _start_time
+
+def get_version() -> str:
+    """Get current git commit hash."""
+    try:
+        return subprocess.check_output(
+            ['git', 'rev-parse', '--short', 'HEAD'],
+            cwd='/home/runner/work/claude-crypto-bot/claude-crypto-bot'
+        ).decode().strip()
+    except:
+        return 'unknown'
+
 @app.get("/health")
 async def health_check():
-    """Get current system health status."""
+    """Enhanced health check endpoint with bot status, uptime, and version."""
     try:
-        health_data = health_scheduler.run_immediate_check()
-        return JSONResponse(health_data)
+        return JSONResponse({
+            "status": "ok",
+            "timestamp": datetime.now().isoformat(),
+            "bot_running": bot.is_running,
+            "uptime_seconds": get_uptime(),
+            "version": get_version(),
+            "detailed_health": health_scheduler.run_immediate_check() if 'health_scheduler' in globals() else None
+        })
     except Exception as e:
         log.error(f"Error getting health status: {e}")
         return JSONResponse({"status": "error", "error": str(e)}, status_code=500)

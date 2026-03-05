@@ -85,21 +85,28 @@ GITHUB_REPO=bobby-langley-personal/claude-crypto-bot
 #### Systemd Services
 Two services managed by systemd:
 
-**cryptobot.service** — runs the trading bot
+**cryptobot.service** — runs the trading bot (enhanced for stability)
 ```ini
 [Unit]
 Description=Crypto Bot
 After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 WorkingDirectory=/root/claude-crypto-bot
 ExecStart=/usr/local/bin/uvicorn web_server:app --host 0.0.0.0 --port 8001
 Restart=always
+RestartSec=10
 User=root
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+**IMPORTANT**: Service updated with auto-restart policies, start limiting to prevent boot loops, and proper logging.
 
 **webhook.service** — listens for GitHub pushes
 ```ini
@@ -124,11 +131,13 @@ Triggered automatically by webhook on every push to main:
 echo "=== Deploy started at $(date) ===" >> /root/deploy.log
 cd /root/claude-crypto-bot
 git pull origin main >> /root/deploy.log 2>&1
-pkill -f uvicorn
-sleep 2
-nohup uvicorn web_server:app --host 0.0.0.0 --port 8001 >> /root/deploy.log 2>&1 &
+pip3 install -r requirements.txt --break-system-packages --ignore-installed >> /root/deploy.log 2>&1
+systemctl restart cryptobot
 echo "=== Deploy complete at $(date) ===" >> /root/deploy.log
+systemctl status cryptobot >> /root/deploy.log
 ```
+
+**IMPORTANT**: Updated deploy script now uses systemctl instead of manual process management to prevent conflicts and zombie processes.
 
 #### Webhook Configuration
 - **Payload URL:** http://167.71.253.88:9000/deploy
@@ -208,10 +217,34 @@ cat /root/deploy.log
   python-dotenv, pandas, pandas-ta, requests, schedule, rich,
   flask, websockets
 
+#### App Stability and Self-Healing (March 2026)
+
+**Health Monitoring**
+- Enhanced `/health` endpoint with bot status, uptime, and version info
+- Self-healing script (`/root/healthcheck.sh`) runs every 5 minutes via cron
+- Automatic restart if health check fails, with success verification
+- Dashboard shows uptime in header and git commit hash in footer
+
+**Process Management Improvements**  
+- Fixed systemd vs screen session conflicts
+- Deploy script now uses `systemctl restart cryptobot` instead of manual process killing
+- Enhanced `cryptobot.service` with auto-restart policies and start limiting
+- Proper logging to systemd journal for better troubleshooting
+
+**Deployment Verification**
+- Deploy log now includes `systemctl status` output for verification
+- Git commit hash displayed in dashboard footer to verify deployed version
+- Health status link in footer for quick system check access
+
+**Crontab Entry (needs manual setup on server):**
+```bash
+# Add this to root crontab with: crontab -e
+*/5 * * * * /bin/bash /root/healthcheck.sh
+```
+
 #### Known Issues / Quirks
 - typing-extensions conflict with system packages — always use
   --ignore-installed when pip installing
-- screen sessions accumulate — use pkill -f screen to clean up
 - Bot runs on port 8001 (not 8000) because 8000 was already 
   bound during initial setup
 - webhook.py has no HMAC verification currently — security 
