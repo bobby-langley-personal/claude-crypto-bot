@@ -70,6 +70,9 @@
       <span x-show="s.next_check && s.next_check !== '—'" x-text="'Next: ' + s.next_check"></span>
       <span x-show="s.portfolio?.trade_count" class="text-slate-700"
             x-text="(s.portfolio?.trade_count || 0) + ' total trades'"></span>
+      <span x-show="s.uptime_seconds" class="text-slate-600"
+            x-text="'Uptime: ' + formatUptime(s.uptime_seconds)"
+            title="How long the bot has been running without restart"></span>
     </div>
 
     <div class="flex items-center gap-2">
@@ -974,6 +977,19 @@
 
   </main>
 
+  <!-- ══ FOOTER ═════════════════════════════════════════════════════════════════ -->
+  <footer class="border-t border-slate-800/60 bg-navy-950/95 backdrop-blur px-5 py-2">
+    <div class="flex items-center justify-center gap-4 text-xs text-slate-600">
+      <span x-show="s.git_version" class="font-mono">
+        Git: <span x-text="s.git_version" class="text-slate-500"></span>
+      </span>
+      <span>•</span>
+      <a href="/health" target="_blank" class="text-slate-500 hover:text-slate-400 transition-colors">Health Status</a>
+      <span>•</span>
+      <span x-show="s.uptime_seconds" x-text="'Uptime: ' + formatUptime(s.uptime_seconds)"></span>
+    </div>
+  </footer>
+
   <!-- ══ COST MODAL ═══════════════════════════════════════════════════════════ -->
   <div x-show="showCostModal" 
        class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4"
@@ -1797,6 +1813,21 @@ function app() {
         return `${hours.toFixed(1)}hrs`;
       } else {
         return `${(hours / 24).toFixed(1)}days`;
+      }
+    },
+
+    formatUptime(seconds) {
+      if (!seconds) return 'unknown';
+      const hours = Math.floor(seconds / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      if (hours < 1) {
+        return `${minutes}m`;
+      } else if (hours < 24) {
+        return `${hours}h ${minutes}m`;
+      } else {
+        const days = Math.floor(hours / 24);
+        const remainingHours = hours % 24;
+        return `${days}d ${remainingHours}h`;
       }
     }
   }
