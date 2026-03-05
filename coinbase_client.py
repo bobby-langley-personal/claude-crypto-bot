@@ -7,6 +7,8 @@ import time
 import requests
 import logging
 
+from cost_tracker import cost_tracker
+
 log = logging.getLogger(__name__)
 
 # Coinbase public spot price endpoint (no API key required)
@@ -29,6 +31,10 @@ def get_price(symbol: str) -> float | None:
         response = requests.get(url, timeout=10)
         ms       = (time.monotonic() - t0) * 1000
         response.raise_for_status()
+        
+        # Track Coinbase API call
+        cost_tracker.track_api_call("coinbase")
+        
         price    = float(response.json()["data"]["amount"])
         log.debug(f"[Coinbase] {symbol}/USD = ${price:,.4f}  ({ms:.0f} ms)")
         return price

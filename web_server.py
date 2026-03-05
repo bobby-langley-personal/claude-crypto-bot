@@ -262,6 +262,26 @@ async def costs():
     return JSONResponse(cost_tracker.get_cost_breakdown())
 
 
+@app.get("/bot/costs/{timeframe}")
+async def costs_by_timeframe(timeframe: str):
+    """Get cost breakdown for specific timeframes: '24h', '7d', 'inception'."""
+    if timeframe not in ["24h", "7d", "inception"]:
+        return JSONResponse({"error": "Invalid timeframe. Use 24h, 7d, or inception"}, status_code=400)
+    
+    try:
+        breakdown = cost_tracker.get_cost_by_timeframe(timeframe)
+        return JSONResponse(breakdown)
+    except Exception as e:
+        log.error(f"Error getting cost breakdown for {timeframe}: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/bot/costs/claude")
+async def claude_model_breakdown():
+    """Get detailed Claude model cost breakdown."""
+    return JSONResponse(cost_tracker.get_claude_model_breakdown())
+
+
 @app.get("/bot/pnl/{period}")
 async def get_pnl_breakdown(period: str):
     """Get P&L breakdown for specified time period (1h, 24h, 7d)."""

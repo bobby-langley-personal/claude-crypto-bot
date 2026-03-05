@@ -55,7 +55,7 @@ DASHBOARD_PORT = 8000
 # Files/dirs to exclude from the upload
 EXCLUDE = frozenset({
     "__pycache__", ".git", ".env", "deploy",
-    "portfolio.json", "trades.json", "bot.log",
+    "portfolio.json", "trades.json", "bot.log", "cost_data.json",
     "*.pyc", ".DS_Store",
 })
 

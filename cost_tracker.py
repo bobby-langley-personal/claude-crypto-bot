@@ -41,10 +41,13 @@ class CostTracker:
                 "output_tokens": 0.00007500,  # $75.00 per million output tokens
                 "cache_read_tokens": 0.00000150,  # $1.50 per million cache read tokens
             },
+            "coinbase_api": 0.00,             # Free tier
             "cryptopanic_api": 0.00,          # Free tier
             "reddit_api": 0.00,               # Free
-            "coingecko_api": 0.00,           # Free tier
-            "aws_ec2_t2_micro": 0.0116,      # Per hour for t2.micro (free tier eligible)
+            "coingecko_api": 0.00,            # Free tier
+            "news_rss_api": 0.00,             # Free RSS feeds
+            "fear_greed_api": 0.00,           # Free Fear & Greed index
+            "aws_ec2_t2_micro": 0.0116,       # Per hour for t2.micro (free tier eligible)
             "aws_data_transfer": 0.09,        # Per GB after 1GB free
         }
     
@@ -260,9 +263,12 @@ class CostTracker:
         # Format service costs with friendly names
         service_names = {
             "claude_api": "Claude AI",
+            "coinbase_api": "Coinbase API",
             "cryptopanic_api": "CryptoPanic News",
             "reddit_api": "Reddit News",
             "coingecko_api": "CoinGecko Data",
+            "news_rss_api": "RSS News Feeds",
+            "fear_greed_api": "Fear & Greed Index",
             "aws_ec2": "AWS Hosting",
         }
         
@@ -334,7 +340,8 @@ class CostTracker:
             if service_cost > 0 or service_calls > 0:
                 services[service] = {
                     "total": service_cost,
-                    "calls": service_calls
+                    "calls": service_calls,
+                    "percentage": 0.0  # Will calculate after total is known
                 }
                 total_cost += service_cost
         
@@ -365,11 +372,34 @@ class CostTracker:
                     "cost": model_cost
                 }
         
+        # Calculate percentages for services
+        if total_cost > 0:
+            for service_data in services.values():
+                service_data["percentage"] = (service_data["total"] / total_cost) * 100
+        
+        # Format services with friendly names
+        service_names = {
+            "claude_api": "Claude AI",
+            "coinbase_api": "Coinbase API", 
+            "cryptopanic_api": "CryptoPanic News",
+            "reddit_api": "Reddit News",
+            "coingecko_api": "CoinGecko Data",
+            "news_rss_api": "RSS News Feeds",
+            "fear_greed_api": "Fear & Greed Index",
+            "aws_ec2": "AWS Hosting",
+        }
+        
+        formatted_services = {}
+        for service, data in services.items():
+            friendly_name = service_names.get(service, service.title())
+            formatted_services[friendly_name] = data
+        
         return {
             "total": total_cost,
             "timeframe": timeframe,
-            "services": services,
+            "services": formatted_services,
             "claude_models": claude_models,
+            "daily_average": total_cost / max(1, (now - cutoff).days) if timeframe in ["7d"] else 0.0,
             "last_updated": datetime.now().isoformat()
         }
     
