@@ -42,6 +42,9 @@ from pydantic import BaseModel
 from bot_controller import BotController
 from cost_tracker import cost_tracker
 from version import get_version_info
+from error_logger import error_logger, get_error_summary
+from health_checker import health_checker
+from health_scheduler import health_scheduler
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -306,6 +309,63 @@ async def sell_for_proof():
 async def version_info():
     """Get app version information."""
     return JSONResponse(get_version_info())
+
+
+@app.get("/health")
+async def health_check():
+    """Get current system health status."""
+    try:
+        health_data = health_scheduler.run_immediate_check()
+        return JSONResponse(health_data)
+    except Exception as e:
+        log.error(f"Error getting health status: {e}")
+        return JSONResponse({"status": "error", "error": str(e)}, status_code=500)
+
+
+@app.get("/errors")
+async def get_errors():
+    """Get error summary and recent errors."""
+    try:
+        summary = get_error_summary()
+        recent_errors = error_logger.get_recent_errors(24)
+        
+        # Remove sensitive stack trace info for API response
+        sanitized_errors = []
+        for error in recent_errors:
+            sanitized = {
+                "id": error["id"],
+                "timestamp": error["last_occurred"],
+                "error_type": error["error_type"],
+                "error_message": error["error_message"],
+                "component": error["component"],
+                "severity": error["severity"],
+                "occurrence_count": error["occurrence_count"],
+                "resolved": error["resolved"],
+                "github_issue_created": error["github_issue_created"]
+            }
+            sanitized_errors.append(sanitized)
+        
+        return JSONResponse({
+            "summary": summary,
+            "recent_errors": sanitized_errors
+        })
+    except Exception as e:
+        log.error(f"Error getting error data: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/errors/{error_id}/resolve")
+async def resolve_error(error_id: str, request: Request):
+    """Mark an error as resolved."""
+    try:
+        body = await request.json()
+        fix_description = body.get("fix_description", "Manually resolved via web interface")
+        
+        error_logger.mark_error_resolved(error_id, fix_description)
+        return JSONResponse({"success": True, "message": f"Error {error_id} marked as resolved"})
+    except Exception as e:
+        log.error(f"Error resolving error {error_id}: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @app.get("/coins/search")
