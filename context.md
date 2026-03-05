@@ -19,9 +19,216 @@ Goal: grow $1,000 toward $10,000 through automated sentiment + technical analysi
 - `deploy/deploy_aws.py` — one-command AWS EC2 deploy
 
 ## Live Deployment
+
+### AWS Deployment (Legacy)
 - Dashboard: http://3.219.170.4:8000
 - SSH: `ssh -i deploy/crypto-bot-key.pem ec2-user@3.219.170.4`
 - Service logs: `sudo journalctl -u crypto-bot -f`
+
+### DigitalOcean Deployment (Current)
+
+#### Droplet Details
+- **Provider:** DigitalOcean
+- **Droplet Name:** crypto-tool
+- **IP Address:** 167.71.253.88
+- **OS:** Ubuntu 24.04 LTS
+- **Size:** 1GB RAM, 1 vCPU ($6/month)
+- **Region:** New York
+
+#### Running Services
+Two services run simultaneously on this server:
+
+| Service | Port | Purpose |
+|---------|------|---------|
+| uvicorn (bot dashboard) | 8001 | FastAPI web server serving the trading bot UI |
+| webhook listener (Flask) | 9000 | Receives GitHub push webhooks and triggers deploys |
+
+#### Firewall Rules (DigitalOcean Firewall)
+| Type | Protocol | Port | Source |
+|------|----------|------|--------|
+| SSH | TCP | 22 | All IPv4, All IPv6 |
+| Custom | TCP | 8001 | All IPv4, All IPv6 |
+| Custom | TCP | 9000 | All IPv4, All IPv6 |
+
+#### File Structure on Server
+```
+/root/
+├── claude-crypto-bot/          ← main app repo (cloned from GitHub)
+│   ├── .env                    ← API keys (never in git)
+│   ├── cdp_api_key.json        ← Coinbase API key (never in git)
+│   ├── requirements.txt
+│   ├── web_server.py
+│   ├── bot_controller.py
+│   ├── trading_engine.py
+│   ├── sentiment_analyzer.py
+│   ├── strategy_learner.py
+│   ├── templates/
+│   │   └── index.html
+│   ├── portfolio.json          ← paper trading state
+│   ├── trades.json             ← trade history
+│   ├── learning.json           ← AI learning entries
+│   └── costs.json              ← API cost tracking
+├── deploy.sh                   ← deployment script
+├── deploy.log                  ← deployment log
+└── webhook.py                  ← GitHub webhook listener
+```
+
+#### Environment Variables (.env)
+```
+ANTHROPIC_API_KEY=
+CRYPTOPANIC_API_KEY=
+PAPER_TRADING=True
+GITHUB_TOKEN=
+GITHUB_REPO=bobby-langley-personal/claude-crypto-bot
+```
+
+#### Systemd Services
+Two services managed by systemd:
+
+**cryptobot.service** — runs the trading bot
+```ini
+[Unit]
+Description=Crypto Bot
+After=network.target
+
+[Service]
+WorkingDirectory=/root/claude-crypto-bot
+ExecStart=/usr/local/bin/uvicorn web_server:app --host 0.0.0.0 --port 8001
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**webhook.service** — listens for GitHub pushes
+```ini
+[Unit]
+Description=GitHub Webhook Listener
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /root/webhook.py
+Restart=always
+User=root
+Environment=WEBHOOK_SECRET=mysecretkey123
+
+[Install]
+WantedBy=multi-user.target
+```
+
+#### Deploy Script (/root/deploy.sh)
+Triggered automatically by webhook on every push to main:
+```bash
+#!/bin/bash
+echo "=== Deploy started at $(date) ===" >> /root/deploy.log
+cd /root/claude-crypto-bot
+git pull origin main >> /root/deploy.log 2>&1
+pkill -f uvicorn
+sleep 2
+nohup uvicorn web_server:app --host 0.0.0.0 --port 8001 >> /root/deploy.log 2>&1 &
+echo "=== Deploy complete at $(date) ===" >> /root/deploy.log
+```
+
+#### Webhook Configuration
+- **Payload URL:** http://167.71.253.88:9000/deploy
+- **Content Type:** application/json
+- **Secret:** mysecretkey123
+- **Trigger:** Push to main branch only
+- **SSL Verification:** Disabled (no SSL cert on server)
+
+#### Auto-Deploy Pipeline
+```
+PR merged to main
+      ↓
+GitHub fires webhook → http://167.71.253.88:9000/deploy
+      ↓
+webhook.py receives POST, verifies ref is main
+      ↓
+Calls /root/deploy.sh
+      ↓
+deploy.sh: git pull → pkill uvicorn → restart uvicorn
+      ↓
+Bot live with new code at http://167.71.253.88:8001
+      ↓
+Logged to /root/deploy.log
+```
+
+#### Useful Server Commands
+
+**Check what's running:**
+```bash
+ps aux | grep uvicorn
+systemctl status webhook
+systemctl status cryptobot
+```
+
+**View live logs:**
+```bash
+tail -f /root/deploy.log
+journalctl -u webhook -f
+journalctl -u cryptobot -f
+```
+
+**Full restart from scratch:**
+```bash
+pkill -f uvicorn
+pkill -f screen
+sleep 2
+cd /root/claude-crypto-bot
+git fetch origin
+git checkout main
+git reset --hard origin/main
+pip3 install -r requirements.txt --break-system-packages --ignore-installed
+screen -S bot
+uvicorn web_server:app --host 0.0.0.0 --port 8001
+# Detach: Ctrl+A then D
+```
+
+**Check current deployed commit:**
+```bash
+cd /root/claude-crypto-bot && git log --oneline -5
+```
+
+**View deploy history:**
+```bash
+cat /root/deploy.log
+```
+
+**Manually trigger deploy:**
+```bash
+/root/deploy.sh
+```
+
+#### Python Environment
+- Python 3.12
+- pip packages installed globally with --break-system-packages
+- No virtual environment (intentional for simplicity)
+- Key packages: uvicorn, fastapi, anthropic, coinbase-advanced-py,
+  python-dotenv, pandas, pandas-ta, requests, schedule, rich,
+  flask, websockets
+
+#### Known Issues / Quirks
+- typing-extensions conflict with system packages — always use
+  --ignore-installed when pip installing
+- screen sessions accumulate — use pkill -f screen to clean up
+- Bot runs on port 8001 (not 8000) because 8000 was already 
+  bound during initial setup
+- webhook.py has no HMAC verification currently — security 
+  improvement needed before going to live trading
+- Server does not have SSL certificate — all traffic is HTTP
+  Dashboard URL is http not https
+
+#### Important Rules for Claude Code
+- NEVER commit .env or cdp_api_key.json
+- NEVER change the port from 8001 without updating firewall rules
+- NEVER modify /root/deploy.sh or /root/webhook.py directly —
+  these are outside the repo. Request manual update if needed.
+- ALWAYS check git log after deploy to confirm new code is live
+- If adding new pip dependencies, add to requirements.txt so
+  deploy.sh picks them up automatically
+- The bot is in PAPER_TRADING=True mode — never change this
+  without explicit user instruction
 
 ## API Keys
 - `.env` — never commit (Coinbase, Anthropic, CryptoPanic keys)
